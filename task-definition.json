@@ -1,0 +1,22 @@
+{
+  "family": "my-nginx-task",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/my-task-role",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/my-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "my-nginx-app",
+      "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-nginx-app:latest",
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "hostPort": 80
+        }
+      ]
+    }
+  ],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512"
+}
