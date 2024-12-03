@@ -19,10 +19,9 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
         
-    # Build and push Docker image (same as previous example)
+    # Build and push Docker image
     
     # Deploy to Production Fargate service
-    # (similar to previous example, but with production-specific configurations)
     
     # Run smoke tests and get approval
     - name: Request Production Approval

@@ -19,11 +19,13 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
         
-    # Build and push Docker image (same as previous example)
+    # Build and push Docker image
     
     # Deploy to UAT Fargate service
-    # (similar to previous example, but with UAT-specific configurations)
     
     # Run UAT tests and get approval
     - name: Request UAT Approval
       uses: trstringer/manual-approval@v1
+      with:
+        secret: ${{ secrets.MY_SECRET }}  # El secreto configurado
+        approvers: "user1,user2,jm0077"          # Usuarios que pueden aprobar
