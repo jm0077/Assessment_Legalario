@@ -3,11 +3,18 @@ name: Production Workflow
 on:
   push:
     branches: [master]
-    
+
 jobs:
 
   deploy_prod:
     runs-on: ubuntu-latest
+
+    permissions:
+      issues: write  # Permite crear y editar issues
+      workflows: write  # Permite interactuar con workflows, como aprobar
+      # Puedes agregar otros permisos según sea necesario, por ejemplo:
+      # contents: read  # Permite leer el contenido del repositorio
+      pull-requests: write  # Permite interactuar con pull requests
 
     steps:
     - uses: actions/checkout@v2
@@ -28,4 +35,5 @@ jobs:
       uses: trstringer/manual-approval@v1
       with:
         secret: ${{ secrets.MY_SECRET }}  # El secreto configurado
-        approvers: "dmsstaging01,jm0077"          # Usuarios que pueden aprobar
+        approvers: "dmsstaging01,jm0077"  # Usuarios que pueden aprobar
+        github_token: ${{ secrets.GITHUB_TOKEN }}  # Usamos el GITHUB_TOKEN de forma explícita
