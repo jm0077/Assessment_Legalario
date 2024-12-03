@@ -11,7 +11,7 @@ jobs:
 
     permissions:
       issues: write  # Permite crear y editar issues
-      workflows: write  # Permite interactuar con workflows, como aprobar
+      workflow: write  # Permite interactuar con workflows, como aprobar
       # Puedes agregar otros permisos según sea necesario, por ejemplo:
       # contents: read  # Permite leer el contenido del repositorio
       pull-requests: write  # Permite interactuar con pull requests
