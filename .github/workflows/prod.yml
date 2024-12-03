@@ -29,4 +29,4 @@ jobs:
       with:
         secret: ${{ secrets.MY_SECRET }}  # El secreto configurado
         approvers: "dmsstaging01,jm0077"  # Usuarios que pueden aprobar
-        github_token: ${{ secrets.GITHUB_TOKEN }}  # Usamos el GITHUB_TOKEN de forma explícita
+        github_token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
