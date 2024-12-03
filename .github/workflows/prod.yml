@@ -28,4 +28,4 @@ jobs:
       uses: trstringer/manual-approval@v1
       with:
         secret: ${{ secrets.MY_SECRET }}  # El secreto configurado
-        approvers: "user1,user2,jm0077"          # Usuarios que pueden aprobar
+        approvers: "dmsstaging01,jm0077"          # Usuarios que pueden aprobar
