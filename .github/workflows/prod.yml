@@ -127,8 +127,9 @@ jobs:
       env:
         VPC_ID: ${{ secrets.VPC_ID }}
       run: |
+        SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
         TARGET_GROUP_ARN=$(aws elbv2 create-target-group \
-          --name green-tg-${{ github.sha }} \
+          --name green-tg-$SHORT_SHA \
           --protocol HTTP \
           --port 80 \
           --vpc-id $VPC_ID \
@@ -177,11 +178,20 @@ jobs:
         ECS_GREEN_SERVICE: my-nginx-prod-green
         ECS_CLUSTER: my-nginx-prod-cluster
       run: |
-        # Reducir servicios Blue a 0
-        aws ecs update-service \
+        # Verificar si el servicio Blue existe y tiene tareas en ejecución
+        BLUE_SERVICE_DETAILS=$(aws ecs describe-services \
           --cluster $ECS_CLUSTER \
-          --service $ECS_BLUE_SERVICE \
-          --desired-count 0
+          --services $ECS_BLUE_SERVICE \
+          --query 'services[0].runningCount' \
+          --output text)
+
+        if [ "$BLUE_SERVICE_DETAILS" != "0" ]; then
+          # Reducir servicios Blue a 0 solo si hay tareas en ejecución
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_BLUE_SERVICE \
+            --desired-count 0
+        fi
         
         # Escalar Green a 1
         aws ecs update-service \
