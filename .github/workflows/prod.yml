@@ -11,7 +11,6 @@ env:
   ECR_REPOSITORY: my-nginx-app
   ECS_CLUSTER: my-nginx-prod-cluster
   ECS_SERVICE: my-nginx-prod-service
-  GREEN_SERVICE_NAME: my-nginx-green-service
 
 jobs:
   build:
@@ -61,82 +60,20 @@ jobs:
             --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-      - name: Force Delete Existing Green Service
-        run: |
-          # Verificar el estado actual del servicio
-          SERVICE_STATUS=$(aws ecs describe-services \
-            --cluster $ECS_CLUSTER \
-            --services $GREEN_SERVICE_NAME \
-            --query 'services[0].status' \
-            --output text 2>/dev/null || echo "INACTIVE")
-            
-          echo "Current service status: $SERVICE_STATUS"
-          
-          # Si el servicio existe (no está INACTIVE)
-          if [ "$SERVICE_STATUS" != "INACTIVE" ]; then
-            # Si el servicio está en DRAINING, esperamos a que termine
-            if [ "$SERVICE_STATUS" == "DRAINING" ]; then
-              echo "Service is in DRAINING state, waiting for completion..."
-              aws ecs delete-service \
-                --cluster $ECS_CLUSTER \
-                --service $GREEN_SERVICE_NAME \
-                --force || true
-            else
-              # Si el servicio está ACTIVE, intentamos eliminarlo
-              aws ecs delete-service \
-                --cluster $ECS_CLUSTER \
-                --service $GREEN_SERVICE_NAME \
-                --force || true
-            fi
-          fi
-
-      - name: Wait for Service Deletion
-        run: |
-          max_attempts=12
-          attempt=0
-          
-          while [ $attempt -lt $max_attempts ]; do
-            SERVICE_STATUS=$(aws ecs describe-services \
-              --cluster $ECS_CLUSTER \
-              --services $GREEN_SERVICE_NAME \
-              --query 'services[0].[status,runningCount]' \
-              --output text 2>/dev/null || echo "INACTIVE 0")
-            
-            echo "Service check result: $SERVICE_STATUS"
-            
-            if [ "$SERVICE_STATUS" == "INACTIVE 0" ] || echo "$SERVICE_STATUS" | grep -q "MISSING"; then
-              echo "Service is fully deleted"
-              break
-            fi
-            
-            # Si aún existe el servicio pero no tiene tareas, intentamos forzar la eliminación nuevamente
-            if echo "$SERVICE_STATUS" | grep -q " 0$"; then
-              echo "No running tasks, attempting force delete again..."
-              aws ecs delete-service \
-                --cluster $ECS_CLUSTER \
-                --service $GREEN_SERVICE_NAME \
-                --force || true
-            fi
-            
-            attempt=$((attempt + 1))
-            if [ $attempt -eq $max_attempts ]; then
-              echo "Timeout reached, but proceeding since service should be inactive"
-              break
-            fi
-            
-            echo "Attempt $attempt of $max_attempts, waiting 5 seconds..."
-            sleep 5
-          done
-
-      - name: Create Green Service
+      - name: Create New Green Service
         env:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
           PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
           SECURITY_GROUP: sg-0e2f023a42da0b442
         run: |
+          # Generar un nombre único para el servicio usando timestamp
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          NEW_SERVICE_NAME="my-nginx-green-service-${TIMESTAMP}"
+          echo "new_service_name=${NEW_SERVICE_NAME}" >> $GITHUB_ENV
+          
           aws ecs create-service \
             --cluster $ECS_CLUSTER \
-            --service-name $GREEN_SERVICE_NAME \
+            --service-name $NEW_SERVICE_NAME \
             --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
             --desired-count 1 \
             --launch-type FARGATE \
@@ -150,10 +87,10 @@ jobs:
           # Esperar a que el servicio esté estable
           sleep 30
           
-          # Obtener el ARN de la tarea usando --query directamente
+          # Obtener el ARN de la tarea usando el nuevo nombre de servicio
           TASK_ARN=$(aws ecs list-tasks \
             --cluster $ECS_CLUSTER \
-            --service-name $GREEN_SERVICE_NAME \
+            --service-name ${{ env.new_service_name }} \
             --query 'taskArns[0]' \
             --output text)
 
@@ -227,12 +164,25 @@ jobs:
             --rule-arn ${{ secrets.GREEN_LISTENER_RULE_ARN }} \
             --actions Type=forward,TargetGroupArn=${{ secrets.GREEN_TARGET_GROUP_ARN }}
 
-      - name: Clean Up Old Blue Service
+      - name: Clean Up Old Services
         run: |
-          aws ecs delete-service \
+          # Obtener lista de servicios antiguos
+          SERVICES=$(aws ecs list-services \
             --cluster $ECS_CLUSTER \
-            --service my-nginx-prod-service \
-            --force || true
+            --query 'serviceArns[*]' \
+            --output text)
+          
+          # Eliminar servicios antiguos excepto el actual
+          for SERVICE in $SERVICES; do
+            SERVICE_NAME=$(basename $SERVICE)
+            if [ "$SERVICE_NAME" != "${{ env.new_service_name }}" ]; then
+              echo "Deleting old service: $SERVICE_NAME"
+              aws ecs delete-service \
+                --cluster $ECS_CLUSTER \
+                --service $SERVICE_NAME \
+                --force || true
+            fi
+          done
 
       - name: Verify Final Deployment
         env:
