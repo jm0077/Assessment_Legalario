@@ -106,12 +106,10 @@ jobs:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
         run: |
           # Retrieve the task ARNs
-          TASK_ARNS=$(aws ecs list-tasks \
-            --cluster $ECS_CLUSTER \
-            --service-name my-nginx-green-service)
+          TASK_ARNS=$(aws ecs list-tasks --cluster my-nginx-prod-cluster --service-name my-nginx-green-service)
 
           # Debug: Print out the task ARNs
-          echo "Retrieved Task ARNs: $TASK_ARNS"
+          echo "Retrieved Task ARNsaaaaaaaaaaaaaaaa: $TASK_ARNS"
 
           # Parse the first task ARN
           TASK_ARN=$(echo $TASK_ARNS | jq -r '.taskArns[0]')
