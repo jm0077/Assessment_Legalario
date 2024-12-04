@@ -173,7 +173,7 @@ jobs:
           
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
-            --service-name $ECS_SERVICE \
+            --service $ECS_SERVICE \
             --task-definition $task_def \
             --desired-count 1
 
