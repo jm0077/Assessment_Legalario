@@ -221,6 +221,14 @@ resource "aws_ecs_task_definition" "main" {
       hostPort      = 80
       protocol      = "tcp"
     }]
+	logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = "/ecs/my-nginx-service"
+        awslogs-region        = "us-east-1"
+        awslogs-stream-prefix = "ecs"
+      }
+    }
   }])
 }
 
