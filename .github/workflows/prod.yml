@@ -1,38 +1,16 @@
-name: Production Workflow  
+name: Production Workflow
+
 on:
   push:
-    branches: [master]
+    branches: [main]
 
 jobs:
-  build-and-prepare:
+
+  create-approval:
     runs-on: ubuntu-latest
+    
     steps:
     - uses: actions/checkout@v2
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
-    
-    # Placeholder para construcción de imagen Docker
-    - name: Build Docker image
-      run: |
-        echo "Building Docker image..."
-        # Añade aquí tus comandos de construcción de imagen
-    
-    # Placeholder para push de imagen a ECR
-    - name: Push to ECR
-      run: |
-        echo "Pushing image to ECR..."
-        # Añade aquí tus comandos de push de imagen
-
-  wait-for-approval:
-    needs: build-and-prepare
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2  # Añade este paso para clonar el repositorio
     
     - name: Create Approval Issue
       env:
@@ -89,9 +67,10 @@ jobs:
         echo "Approval timeout reached"
         exit 1
 
-  deploy:
-    needs: wait-for-approval
+  build-and-push:
+    needs: create-approval
     runs-on: ubuntu-latest
+    
     steps:
     - uses: actions/checkout@v2
     
@@ -101,13 +80,69 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
-    
-    - name: Deploy to Fargate
+        
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+        
+    - name: Build, tag, and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
       run: |
-        echo "Deploying to Fargate..."
-        # Añade aquí tus comandos de despliegue a Fargate
+        docker build -t $ECR_REGISTRY/my-nginx-app:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/my-nginx-app:$IMAGE_TAG
+
+  blue-green-deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
     
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Deploy to Fargate (Blue)
+      env:
+        ECS_SERVICE: my-nginx-prod-blue
+        ECS_CLUSTER: my-nginx-prod-cluster
+        CONTAINER_NAME: my-nginx-app
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Create new task definition
+        task_def=$(aws ecs register-task-definition --cli-input-json file://task-definition.json --query 'taskDefinition.taskDefinitionArn' --output text)
+        
+        # Update Blue service with new task definition
+        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $task_def
+
+    - name: Configure Application Load Balancer
+      env:
+        ALB_DNS: ${{ secrets.ALB_DNS }}
+      run: |
+        # Configure ALB to point to Blue environment
+        aws elb modify-load-balancer-listeners --load-balancer-name my-nginx-alb --listener-descriptions file://alb-listener-config.json
+
     - name: Run Smoke Tests
       run: |
-        echo "Running smoke tests..."
-        # Añade aquí tus pruebas de humo
+        # Basic smoke test to check if the application is responding
+        ALB_DNS=$(aws elbv2 describe-load-balancers --names my-nginx-alb --query 'LoadBalancers[0].DNSName' --output text)
+        if curl -s --head --request GET $ALB_DNS | grep "200 OK" > /dev/null; then
+          echo "Smoke test passed: Application is responding"
+        else
+          echo "Smoke test failed: Application is not responding"
+          exit 1
+        fi
+        
+    - name: Swap Blue-Green Deployments
+      env:
+        ECS_BLUE_SERVICE: my-nginx-prod-blue
+        ECS_GREEN_SERVICE: my-nginx-prod-green
+      run: |
+        # Swap the Blue and Green services
+        aws ecs update-service --cluster my-nginx-prod-cluster --service $ECS_BLUE_SERVICE --desired-count 0
+        aws ecs update-service --cluster my-nginx-prod-cluster --service $ECS_GREEN_SERVICE --desired-count 1
