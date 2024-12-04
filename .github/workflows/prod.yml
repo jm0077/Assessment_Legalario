@@ -32,6 +32,8 @@ jobs:
     needs: build-and-prepare
     runs-on: ubuntu-latest
     steps:
+    - uses: actions/checkout@v2  # Añade este paso para clonar el repositorio
+    
     - name: Create Approval Issue
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
