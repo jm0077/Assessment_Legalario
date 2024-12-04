@@ -232,3 +232,8 @@ output "public_subnet_ids" {
     aws_subnet.public_3.id
   ]
 }
+
+output "security_group_id" {
+  value = aws_security_group.allow_http.id
+  description = "El ID del grupo de seguridad para permitir tráfico HTTP."
+}

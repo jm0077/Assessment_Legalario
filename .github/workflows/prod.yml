@@ -137,6 +137,8 @@ jobs:
           ECS_SERVICE: my-nginx-prod-green
           ECS_CLUSTER: my-nginx-prod-cluster
           CONTAINER_NAME: my-nginx-app
+          PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
+          SECURITY_GROUP: sg-0e2f023a42da0b442
         run: |
           # Crear servicio ECS si no existe
           task_def=$(aws ecs register-task-definition \
@@ -152,7 +154,7 @@ jobs:
             --task-definition $task_def \
             --desired-count 1 \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[subnet-xxxxxx],securityGroups=[sg-xxxxxx],assignPublicIp=ENABLED}"
+            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
 
       - name: Deploy to Fargate Green Environment (Update Service)
         if: env.ACTION == 'update'
