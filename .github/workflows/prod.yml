@@ -105,8 +105,9 @@ jobs:
       - name: Check if ECS Service Exists
         id: check-service
         run: |
+          # Verificar si el servicio ya existe
           SERVICE_EXISTS=$(aws ecs describe-services --cluster my-nginx-prod-cluster --services my-nginx-prod-green --query 'services[0].serviceName' --output text)
-
+          
           if [ "$SERVICE_EXISTS" != "my-nginx-prod-green" ]; then
             echo "create" >> $GITHUB_ENV
           else
@@ -127,7 +128,7 @@ jobs:
             --target-type ip \
             --query 'TargetGroups[0].TargetGroupArn' \
             --output text)
-
+          
           echo "TARGET_GROUP_ARN=$TARGET_GROUP_ARN" >> $GITHUB_ENV
 
       - name: Deploy to Fargate Green Environment (Create Service)
@@ -137,11 +138,14 @@ jobs:
           ECS_CLUSTER: my-nginx-prod-cluster
           CONTAINER_NAME: my-nginx-app
         run: |
+          # Crear servicio ECS si no existe
           task_def=$(aws ecs register-task-definition \
             --cli-input-json file://task-definition.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-
+          
+          echo "Registered Task Definition ARN: $task_def"
+          
           aws ecs create-service \
             --cluster $ECS_CLUSTER \
             --service $ECS_SERVICE \
@@ -157,11 +161,14 @@ jobs:
           ECS_CLUSTER: my-nginx-prod-cluster
           CONTAINER_NAME: my-nginx-app
         run: |
+          # Actualizar servicio ECS si ya existe
           task_def=$(aws ecs register-task-definition \
             --cli-input-json file://task-definition.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-
+          
+          echo "Registered Task Definition ARN: $task_def"
+          
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
             --service $ECS_SERVICE \
