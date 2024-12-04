@@ -93,16 +93,7 @@ jobs:
         TASK_ROLE_ARN: arn:aws:iam::908027419539:role/ecs-task-role
         EXECUTION_ROLE_ARN: arn:aws:iam::908027419539:role/ecs-task-execution-role
       run: |
-        # Generar task definition escapando posibles caracteres problemáticos
-        IMAGE_URL=$(echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" | sed 's/[^a-zA-Z0-9./:_-]//g')
-        
-        # Mostrar información de depuración
-        echo "Registry: $ECR_REGISTRY"
-        echo "Repository: $ECR_REPOSITORY"
-        echo "Image Tag: $IMAGE_TAG"
-        echo "Image URL: $IMAGE_URL"
-        
-        # Crear definición de tarea con escape de caracteres
+        # Generate task definition with actual values
         cat > task-definition.json << EOF
         {
           "family": "my-nginx-task",
@@ -111,7 +102,7 @@ jobs:
           "containerDefinitions": [
             {
               "name": "my-nginx-app",
-              "image": "$IMAGE_URL",
+              "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
               "portMappings": [
                 {
                   "containerPort": 80,
@@ -134,7 +125,7 @@ jobs:
         }
         EOF
 
-        # Mostrar contenido del archivo
+        # Display the generated task definition
         cat task-definition.json
 
     - name: Build, tag, and push image to Amazon ECR
