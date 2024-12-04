@@ -51,7 +51,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Register Task Definition
+      - name: Update Task Definition
         id: task-def
         run: |
           TASK_DEF_ARN=$(aws ecs register-task-definition \
@@ -60,44 +60,59 @@ jobs:
             --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-      - name: Update ECS Service with Green Target Group
+      - name: Delete Existing Green Service if Exists
+        continue-on-error: true
+        run: |
+          aws ecs delete-service \
+            --cluster $ECS_CLUSTER \
+            --service my-nginx-green-service \
+            --force || true
+
+      - name: Create Green Service
         env:
-          ECS_SERVICE: my-nginx-green-service
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
           PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
           SECURITY_GROUP: sg-0e2f023a42da0b442
         run: |
           aws ecs create-service \
             --cluster $ECS_CLUSTER \
-            --service-name $ECS_SERVICE \
+            --service-name my-nginx-green-service \
             --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
             --desired-count 1 \
-            --load-balancers targetGroupArn=$GREEN_TARGET_GROUP_ARN,containerName=my-nginx-app,containerPort=80 \
+            --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}" \
-            --launch-type FARGATE || true
+            --load-balancers targetGroupArn=$GREEN_TARGET_GROUP_ARN,containerName=my-nginx-app,containerPort=80
 
       - name: Verify Green Deployment
         env:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
         run: |
-          # Wait for service stability with longer timeout
-          aws ecs wait services-stable \
+          # Retrieve the task ARN
+          TASK_ARN=$(aws ecs list-tasks \
             --cluster $ECS_CLUSTER \
-            --services my-nginx-green-service
+            --service-name my-nginx-green-service \
+            --query 'taskArns[0]' \
+            --output text)
 
-          # Get current target group ARN
-          TARGET_GROUP_ARN=$GREEN_TARGET_GROUP_ARN
-
-          # Wait for target group to have healthy targets
-          max_attempts=10
+          # Wait for the specific task to reach a steady state
+          max_attempts=20
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
+            # Describe the task to get its status
+            TASK_STATUS=$(aws ecs describe-tasks \
+              --cluster $ECS_CLUSTER \
+              --tasks $TASK_ARN \
+              --query 'tasks[0].lastStatus' \
+              --output text)
+
+            # Check target group health
             TARGET_HEALTH=$(aws elbv2 describe-target-health \
-              --target-group-arn $TARGET_GROUP_ARN \
+              --target-group-arn $GREEN_TARGET_GROUP_ARN \
               --query 'TargetHealthDescriptions[*].TargetHealth.State' \
               --output text)
 
-            if [[ "$TARGET_HEALTH" == *"healthy"* ]]; then
+            # Break if task is RUNNING and target is HEALTHY
+            if [[ "$TASK_STATUS" == "RUNNING" ]] && [[ "$TARGET_HEALTH" == *"healthy"* ]]; then
               break
             fi
 
@@ -111,6 +126,7 @@ jobs:
           # Check conditions
           if [ $attempt -eq $max_attempts ] || [ "$RESPONSE" != "200" ]; then
             echo "Deployment verification failed:"
+            echo "Task Status: $TASK_STATUS"
             echo "Target Group Health: $TARGET_HEALTH"
             echo "HTTP Response: $RESPONSE"
             exit 1
