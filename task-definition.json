@@ -1,11 +1,11 @@
 {
   "family": "my-nginx-task",
-  "taskRoleArn": "${TASK_ROLE_ARN}",
-  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "arn:aws:iam::908027419539:role/ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::908027419539:role/ecs-task-execution-role",
   "containerDefinitions": [
     {
       "name": "my-nginx-app",
-      "image": "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+      "image": "908027419539.dkr.ecr.us-east-1.amazonaws.com/my-nginx-app:latest", 
       "portMappings": [
         {
           "containerPort": 80,

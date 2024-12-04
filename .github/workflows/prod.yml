@@ -84,46 +84,6 @@ jobs:
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
-        
-    - name: Prepare Task Definition
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: my-nginx-app
-        IMAGE_TAG: ${{ github.sha }}
-        TASK_ROLE_ARN: arn:aws:iam::908027419539:role/ecs-task-role
-        EXECUTION_ROLE_ARN: arn:aws:iam::908027419539:role/ecs-task-execution-role
-      run: |
-        # Generate task definition with actual values
-        cat > task-definition.json << EOF
-        {
-          "family": "my-nginx-task",
-          "taskRoleArn": "$TASK_ROLE_ARN",
-          "executionRoleArn": "$EXECUTION_ROLE_ARN",
-          "containerDefinitions": [
-            {
-              "name": "my-nginx-app",
-              "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-              "portMappings": [
-                {
-                  "containerPort": 80,
-                  "hostPort": 80,
-                  "protocol": "tcp"
-                }
-              ],
-              "essential": true
-            }
-          ],
-          "networkMode": "awsvpc",
-          "requiresCompatibilities": [
-            "FARGATE"
-          ],
-          "cpu": "256",
-          "memory": "512",
-          "runtimePlatform": {
-            "operatingSystemFamily": "LINUX"
-          }
-        }
-        EOF
 
     - name: Build, tag, and push image to Amazon ECR
       env:
