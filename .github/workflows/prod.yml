@@ -6,63 +6,7 @@ on:
       - master
 
 jobs:
-  create-approval:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Create Approval Issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue create \
-            --title "Approve Production Deployment" \
-            --body "A new deployment is ready for production.
-
-            Details:
-            - Repository: ${{ github.repository }}
-            - Commit: ${{ github.sha }}
-            - Branch: ${{ github.ref_name }}
-
-            To approve this deployment:
-            - Comment '/approve' on this issue
-
-            To deny:
-            - Comment '/deny' on this issue"
-
-      - name: Wait for Approval
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          max_attempts=30
-          attempt=0
-
-          while [ $attempt -lt $max_attempts ]; do
-            ISSUE=$(gh issue list --limit 1)
-            ISSUE_NUMBER=$(echo "$ISSUE" | awk '{print $1}')
-
-            COMMENTS=$(gh issue view $ISSUE_NUMBER --comments)
-
-            if echo "$COMMENTS" | grep -qE "(/approve|LGTM|looks good)"; then
-              echo "Deployment approved!"
-              exit 0
-            fi
-
-            if echo "$COMMENTS" | grep -q "/deny"; then
-              echo "Deployment denied!"
-              exit 1
-            fi
-
-            sleep 30
-            attempt=$((attempt + 1))
-          done
-
-          echo "Approval timeout reached"
-          exit 1
-
   build-and-push:
-    needs: create-approval
     runs-on: ubuntu-latest
 
     steps:
@@ -88,7 +32,7 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-  blue-green-deploy:
+  deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
 
@@ -102,80 +46,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Check if ECS Service Exists
-        id: check-service
-        run: |
-          # Verificar si el servicio ya existe
-          SERVICE_EXISTS=$(aws ecs describe-services --cluster my-nginx-prod-cluster --services my-nginx-prod-green --query 'services[0].serviceName' --output text)
-          
-          if [ "$SERVICE_EXISTS" == "None" ]; then
-            echo "ACTION=create" >> $GITHUB_ENV
-          else
-            echo "ACTION=update" >> $GITHUB_ENV
-          fi
-
-      - name: Create Target Group for Green Environment
-        if: env.ACTION == 'create'
+      - name: Deploy to ECS
         env:
-          VPC_ID: ${{ secrets.VPC_ID }}
-        run: |
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          TARGET_GROUP_ARN=$(aws elbv2 create-target-group \
-            --name green-tg-$SHORT_SHA \
-            --protocol HTTP \
-            --port 80 \
-            --vpc-id $VPC_ID \
-            --target-type ip \
-            --query 'TargetGroups[0].TargetGroupArn' \
-            --output text)
-          
-          echo "TARGET_GROUP_ARN=$TARGET_GROUP_ARN" >> $GITHUB_ENV
-
-      - name: Deploy to Fargate Green Environment (Create Service)
-        if: env.ACTION == 'create'
-        env:
-          ECS_SERVICE: my-nginx-prod-green
+          ECS_SERVICE: my-nginx-prod-service
           ECS_CLUSTER: my-nginx-prod-cluster
           CONTAINER_NAME: my-nginx-app
           PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
           SECURITY_GROUP: sg-0e2f023a42da0b442
         run: |
-          # Crear servicio ECS si no existe
           task_def=$(aws ecs register-task-definition \
             --cli-input-json file://task-definition.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-          
-          echo "Registered Task Definition ARN: $task_def"
-          
-          aws ecs create-service \
-            --cluster $ECS_CLUSTER \
-            --service-name $ECS_SERVICE \
-            --task-definition $task_def \
-            --desired-count 1 \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
-
-      - name: Deploy to Fargate Green Environment (Update Service)
-        if: env.ACTION == 'update'
-        env:
-          ECS_SERVICE: my-nginx-prod-green
-          ECS_CLUSTER: my-nginx-prod-cluster
-          CONTAINER_NAME: my-nginx-app
-        run: |
-          # Actualizar servicio ECS si ya existe
-          task_def=$(aws ecs register-task-definition \
-            --cli-input-json file://task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          echo "Registered Task Definition ARN: $task_def"
           
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
             --service $ECS_SERVICE \
             --task-definition $task_def \
-            --desired-count 1
+            --desired-count 1 \
+            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
 
       - name: Run Smoke Tests
         run: |
@@ -189,36 +78,3 @@ jobs:
             echo "Smoke test failed: Application is not responding"
             exit 1
           fi
-
-      - name: Swap Blue-Green Deployments
-        env:
-          ECS_BLUE_SERVICE: my-nginx-prod-blue
-          ECS_GREEN_SERVICE: my-nginx-prod-green
-          ECS_CLUSTER: my-nginx-prod-cluster
-        run: |
-          BLUE_SERVICE_DETAILS=$(aws ecs describe-services \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_BLUE_SERVICE \
-            --query 'services[0].runningCount' \
-            --output text)
-
-          if [ "$BLUE_SERVICE_DETAILS" != "0" ]; then
-            aws ecs update-service \
-              --cluster $ECS_CLUSTER \
-              --service $ECS_BLUE_SERVICE \
-              --desired-count 0
-          fi
-
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_GREEN_SERVICE \
-            --desired-count 1
-
-      - name: Update Load Balancer Listener
-        env:
-          LISTENER_ARN: ${{ secrets.LISTENER_ARN }}
-        run: |
-          aws elbv2 modify-listener \
-            --listener-arn $LISTENER_ARN \
-            --default-actions \
-              Type=forward,TargetGroupArn=${{ env.TARGET_GROUP_ARN }}
