@@ -223,8 +223,8 @@ jobs:
 
       - name: Switch Traffic to Green
         run: |
-          aws elbv2 modify-listener-rule \
-            --listener-rule-arn ${{ secrets.GREEN_LISTENER_RULE_ARN }} \
+          aws elbv2 modify-rule \
+            --rule-arn ${{ secrets.GREEN_LISTENER_RULE_ARN }} \
             --actions Type=forward,TargetGroupArn=${{ secrets.GREEN_TARGET_GROUP_ARN }}
 
       - name: Clean Up Old Blue Service
