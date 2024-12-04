@@ -84,6 +84,9 @@ jobs:
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
         
     - name: Prepare Task Definition
       env:
@@ -93,49 +96,40 @@ jobs:
         ECR_REPOSITORY: my-nginx-app
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Verificar y proporcionar un valor predeterminado para EXECUTION_ROLE_ARN
-        if [ -z "$EXECUTION_ROLE_ARN" ]; then
-          # Usar el mismo rol de tarea si no se especifica un rol de ejecución
-          EXECUTION_ROLE_ARN="$TASK_ROLE_ARN"
-        fi
+        # Configurar roles de Terraform
+        TASK_ROLE_ARN="arn:aws:iam::908027419539:role/ecs-task-role"
+        EXECUTION_ROLE_ARN="arn:aws:iam::908027419539:role/ecs-task-execution-role"
 
-        # Validar TASK_ROLE_ARN
-        if [ -z "$TASK_ROLE_ARN" ]; then
-          echo "Error: TASK_ROLE_ARN está vacío"
-          exit 1
-        fi
-
-        # Crear archivo de definición de tarea limpio
-        cat > task-definition.json << EOF
-        {
-          "family": "my-nginx-task",
-          "taskRoleArn": "$TASK_ROLE_ARN",
-          "executionRoleArn": "$EXECUTION_ROLE_ARN",
-          "containerDefinitions": [
-            {
-              "name": "my-nginx-app",
-              "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-              "portMappings": [
-                {
-                  "containerPort": 80,
-                  "hostPort": 80,
-                  "protocol": "tcp"
-                }
-              ],
-              "essential": true
-            }
-          ],
+        # Crear archivo de definición de tarea con escape de caracteres
+        jq -n \
+          --arg family "my-nginx-task" \
+          --arg task_role "$TASK_ROLE_ARN" \
+          --arg exec_role "$EXECUTION_ROLE_ARN" \
+          --arg registry "$ECR_REGISTRY" \
+          --arg repo "$ECR_REPOSITORY" \
+          --arg tag "$IMAGE_TAG" \
+        '{
+          "family": $family,
+          "taskRoleArn": $task_role,
+          "executionRoleArn": $exec_role,
+          "containerDefinitions": [{
+            "name": "my-nginx-app",
+            "image": ($registry + "/" + $repo + ":" + $tag),
+            "portMappings": [{
+              "containerPort": 80,
+              "hostPort": 80,
+              "protocol": "tcp"
+            }],
+            "essential": true
+          }],
           "networkMode": "awsvpc",
-          "requiresCompatibilities": [
-            "FARGATE"
-          ],
+          "requiresCompatibilities": ["FARGATE"],
           "cpu": "256",
           "memory": "512",
           "runtimePlatform": {
             "operatingSystemFamily": "LINUX"
           }
-        }
-        EOF
+        }' > task-definition.json
 
         # Validar archivo generado
         cat task-definition.json
