@@ -63,31 +63,31 @@ jobs:
 
       - name: Force Delete Existing Green Service
         run: |
-          # Verificar si el servicio existe
+          # Verificar el estado actual del servicio
           SERVICE_STATUS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $GREEN_SERVICE_NAME \
             --query 'services[0].status' \
             --output text 2>/dev/null || echo "INACTIVE")
+            
+          echo "Current service status: $SERVICE_STATUS"
           
+          # Si el servicio existe (no está INACTIVE)
           if [ "$SERVICE_STATUS" != "INACTIVE" ]; then
-            # Primero, actualizar el servicio a 0 tareas
-            aws ecs update-service \
-              --cluster $ECS_CLUSTER \
-              --service $GREEN_SERVICE_NAME \
-              --desired-count 0
-            
-            # Esperar a que las tareas se detengan
-            echo "Waiting for tasks to stop..."
-            aws ecs wait services-stable \
-              --cluster $ECS_CLUSTER \
-              --services $GREEN_SERVICE_NAME
-            
-            # Ahora sí, eliminar el servicio
-            aws ecs delete-service \
-              --cluster $ECS_CLUSTER \
-              --service $GREEN_SERVICE_NAME \
-              --force
+            # Si el servicio está en DRAINING, esperamos a que termine
+            if [ "$SERVICE_STATUS" == "DRAINING" ]; then
+              echo "Service is in DRAINING state, waiting for completion..."
+              aws ecs delete-service \
+                --cluster $ECS_CLUSTER \
+                --service $GREEN_SERVICE_NAME \
+                --force || true
+            else
+              # Si el servicio está ACTIVE, intentamos eliminarlo
+              aws ecs delete-service \
+                --cluster $ECS_CLUSTER \
+                --service $GREEN_SERVICE_NAME \
+                --force || true
+            fi
           fi
 
       - name: Wait for Service Deletion
@@ -96,40 +96,37 @@ jobs:
           attempt=0
           
           while [ $attempt -lt $max_attempts ]; do
-            # Verificar si el servicio existe y su estado
-            SERVICE_CHECK=$(aws ecs describe-services \
+            SERVICE_STATUS=$(aws ecs describe-services \
               --cluster $ECS_CLUSTER \
               --services $GREEN_SERVICE_NAME \
               --query 'services[0].[status,runningCount]' \
               --output text 2>/dev/null || echo "INACTIVE 0")
             
-            STATUS=$(echo $SERVICE_CHECK | cut -d' ' -f1)
-            RUNNING_COUNT=$(echo $SERVICE_CHECK | cut -d' ' -f2)
+            echo "Service check result: $SERVICE_STATUS"
             
-            echo "Service Status: $STATUS, Running Tasks: $RUNNING_COUNT"
-            
-            if [ "$STATUS" == "INACTIVE" ] || [ "$STATUS" == "NONE" ]; then
+            if [ "$SERVICE_STATUS" == "INACTIVE 0" ] || echo "$SERVICE_STATUS" | grep -q "MISSING"; then
               echo "Service is fully deleted"
               break
             fi
             
-            if [ "$RUNNING_COUNT" == "0" ]; then
-              echo "No running tasks, service should be safe to replace"
-              break
+            # Si aún existe el servicio pero no tiene tareas, intentamos forzar la eliminación nuevamente
+            if echo "$SERVICE_STATUS" | grep -q " 0$"; then
+              echo "No running tasks, attempting force delete again..."
+              aws ecs delete-service \
+                --cluster $ECS_CLUSTER \
+                --service $GREEN_SERVICE_NAME \
+                --force || true
             fi
             
             attempt=$((attempt + 1))
             if [ $attempt -eq $max_attempts ]; then
-              echo "Timeout reached, but proceeding since no running tasks"
+              echo "Timeout reached, but proceeding since service should be inactive"
               break
             fi
             
             echo "Attempt $attempt of $max_attempts, waiting 5 seconds..."
             sleep 5
           done
-          
-          # Esperar 10 segundos adicionales para asegurar que AWS haya procesado la eliminación
-          sleep 10
 
       - name: Create Green Service
         env:
