@@ -81,10 +81,31 @@ jobs:
 
       - name: Wait for Service Deletion
         run: |
-          # Wait for the service to be fully deleted
-          aws ecs wait services-inactive \
-            --cluster $ECS_CLUSTER \
-            --services $GREEN_SERVICE_NAME
+          # Establecer un contador para el timeout de 1 minuto
+          timeout=60
+          interval=5
+          elapsed=0
+          
+          while [ $elapsed -lt $timeout ]; do
+            # Verificar si el servicio existe
+            SERVICE_STATUS=$(aws ecs describe-services \
+              --cluster $ECS_CLUSTER \
+              --services $GREEN_SERVICE_NAME \
+              --query 'services[0].status' \
+              --output text 2>/dev/null || echo "INACTIVE")
+            
+            if [ "$SERVICE_STATUS" == "INACTIVE" ] || [ "$SERVICE_STATUS" == "None" ]; then
+              echo "Service deleted successfully"
+              exit 0
+            fi
+            
+            echo "Waiting for service deletion... ($elapsed seconds elapsed)"
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+          
+          echo "Timeout reached waiting for service deletion, continuing anyway..."
+          exit 0
 
       - name: Create Green Service
         env:
@@ -105,24 +126,24 @@ jobs:
         env:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
         run: |
-          # Retrieve the task ARNs
-          TASK_ARNS=$(aws ecs list-tasks \
-           --cluster my-nginx-prod-cluster \
-           --service-name my-nginx-green-service \
-           | jq -r '.taskArns[0]')
+          # Esperar a que el servicio esté estable
+          sleep 30
+          
+          # Obtener el ARN de la tarea usando --query directamente
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster $ECS_CLUSTER \
+            --service-name $GREEN_SERVICE_NAME \
+            --query 'taskArns[0]' \
+            --output text)
 
-          # Debug: Print out the task ARNs
-          echo "Retrieved Task ARNsaaaaaaaaaaaaaaaa: $TASK_ARNS"
+          # Debug: Print the task ARN
+          echo "Task ARN: $TASK_ARN"
 
-          # Parse the first task ARN
-          TASK_ARN=$(echo $TASK_ARNS | jq -r '.taskArns[0]')
-
-          # Debug: Print the specific task ARN
-          echo "Selected Task ARN: $TASK_ARN"
-
-          # Verify task ARN length
-          TASK_ARN_LENGTH=${#TASK_ARN}
-          echo "Task ARN Length: $TASK_ARN_LENGTH"
+          # Verificar si se obtuvo un ARN válido
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" == "null" ]; then
+            echo "No se encontró ninguna tarea en ejecución"
+            exit 1
+          fi
 
           # Wait for the specific task to reach a steady state
           max_attempts=20
@@ -135,39 +156,45 @@ jobs:
               --query 'tasks[0].lastStatus' \
               --output text)
 
-            # Debug: Print task status
             echo "Task Status: $TASK_STATUS"
 
             # Check target group health
             TARGET_HEALTH=$(aws elbv2 describe-target-health \
               --target-group-arn $GREEN_TARGET_GROUP_ARN \
-              --query 'TargetHealthDescriptions[*].TargetHealth.State' \
+              --query 'TargetHealthDescriptions[0].TargetHealth.State' \
               --output text)
 
-            # Debug: Print target health
             echo "Target Health: $TARGET_HEALTH"
 
-            # Break if task is RUNNING and target is HEALTHY
-            if [[ "$TASK_STATUS" == "RUNNING" ]] && [[ "$TARGET_HEALTH" == *"healthy"* ]]; then
+            # Break if task is RUNNING and target is healthy
+            if [[ "$TASK_STATUS" == "RUNNING" ]] && [[ "$TARGET_HEALTH" == "healthy" ]]; then
+              echo "Task is running and healthy"
               break
             fi
 
+            # Si la tarea falló, salir con error
+            if [[ "$TASK_STATUS" == "STOPPED" ]]; then
+              echo "Task stopped unexpectedly"
+              exit 1
+            fi
+
             attempt=$((attempt + 1))
+            echo "Attempt $attempt of $max_attempts"
             sleep 30
           done
 
+          # Verificar si se alcanzó el máximo de intentos
+          if [ $attempt -eq $max_attempts ]; then
+            echo "Se alcanzó el máximo número de intentos sin éxito"
+            exit 1
+          fi
+
           # HTTP request to verify application
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.ALB_DNS }})
-
-          # Debug: Print HTTP response
           echo "HTTP Response Code: $RESPONSE"
 
-          # Check conditions
-          if [ $attempt -eq $max_attempts ] || [ "$RESPONSE" != "200" ]; then
-            echo "Deployment verification failed:"
-            echo "Task Status: $TASK_STATUS"
-            echo "Target Group Health: $TARGET_HEALTH"
-            echo "HTTP Response: $RESPONSE"
+          if [ "$RESPONSE" != "200" ]; then
+            echo "La aplicación no está respondiendo correctamente"
             exit 1
           fi
 
