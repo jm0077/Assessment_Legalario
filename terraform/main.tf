@@ -280,6 +280,10 @@ output "load_balancer_listener_arn" {
   value = aws_lb_listener.main.arn
 }
 
+output "target_group_arn" {
+  value = aws_lb_target_group.main.arn
+}
+
 output "public_subnet_ids" {
   value = [
     aws_subnet.public_1.id, 
