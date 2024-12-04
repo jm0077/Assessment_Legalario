@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  build-and-push:
+  create-or-update-service:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,9 +19,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: Check if ECS Service Exists
+        id: check-service
+        run: |
+          set +e
+          SERVICE_EXISTS=$(aws ecs describe-services \
+            --cluster my-nginx-prod-cluster \
+            --services my-nginx-prod-service \
+            --query 'services[0].serviceName' \
+            --output text)
+          
+          if [ "$SERVICE_EXISTS" == "None" ]; then
+            echo "service_exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "service_exists=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
+        id: login-ecr
 
       - name: Build, tag, and push image to Amazon ECR
         env:
@@ -32,49 +48,52 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Deploy to ECS
-        env:
-          ECS_SERVICE: my-nginx-prod-service
-          ECS_CLUSTER: my-nginx-prod-cluster
-          CONTAINER_NAME: my-nginx-app
-          PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
-          SECURITY_GROUP: sg-0e2f023a42da0b442
+      - name: Register Task Definition
+        id: task-def
         run: |
-          task_def=$(aws ecs register-task-definition \
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://task-definition.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-          
-          aws ecs update-service \
+          echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+      - name: Create ECS Service
+        if: steps.check-service.outputs.service_exists == 'false'
+        env:
+          ECS_SERVICE: my-nginx-prod-service
+          ECS_CLUSTER: my-nginx-prod-cluster
+          PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
+          SECURITY_GROUP: sg-0e2f023a42da0b442
+        run: |
+          aws ecs create-service \
             --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --task-definition $task_def \
+            --service-name $ECS_SERVICE \
+            --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
+            --launch-type FARGATE \
             --desired-count 1 \
             --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
 
-      - name: Run Smoke Tests
+      - name: Update ECS Service
+        if: steps.check-service.outputs.service_exists == 'true'
+        env:
+          ECS_SERVICE: my-nginx-prod-service
+          ECS_CLUSTER: my-nginx-prod-cluster
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
+            --desired-count 1
+
+      - name: Verify Deployment
         run: |
           ALB_DNS=$(aws elbv2 describe-load-balancers \
             --query 'LoadBalancers[0].DNSName' \
             --output text)
 
           if curl -s --head --request GET $ALB_DNS | grep "200 OK" > /dev/null; then
-            echo "Smoke test passed: Application is responding"
+            echo "Deployment successful: Application is responding"
           else
-            echo "Smoke test failed: Application is not responding"
+            echo "Deployment failed: Application is not responding"
             exit 1
           fi
