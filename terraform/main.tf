@@ -110,6 +110,23 @@ resource "aws_lb_target_group" "main" {
   target_type = "ip"
 }
 
+resource "aws_lb_target_group" "green" {
+  name        = "my-nginx-green-tg"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    matcher             = "200"
+  }
+}
+
 # Listener del Load Balancer
 resource "aws_lb_listener" "main" {
   load_balancer_arn = aws_lb.main.arn
@@ -295,4 +312,9 @@ output "public_subnet_ids" {
 output "security_group_id" {
   value       = aws_security_group.allow_http.id
   description = "El ID del grupo de seguridad para permitir tráfico HTTP."
+}
+
+output "green_target_group_arn" {
+  value       = aws_lb_target_group.green.arn
+  description = "The ARN of the green target group for Blue-Green deployments"
 }

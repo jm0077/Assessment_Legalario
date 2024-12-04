@@ -5,8 +5,15 @@ on:
     branches:
       - master
 
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 908027419539.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REPOSITORY: my-nginx-app
+  ECS_CLUSTER: my-nginx-prod-cluster
+  ECS_SERVICE: my-nginx-prod-service
+
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,7 +24,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
@@ -25,12 +32,24 @@ jobs:
 
       - name: Build, tag, and push image to Amazon ECR
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: my-nginx-app
           IMAGE_TAG: latest
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Register Task Definition
         id: task-def
@@ -41,37 +60,33 @@ jobs:
             --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-      - name: Update ECS Service with Load Balancer
+      - name: Update ECS Service with Green Target Group
         env:
-          ECS_SERVICE: my-nginx-prod-service
-          ECS_CLUSTER: my-nginx-prod-cluster
-          TARGET_GROUP_ARN: ${{ secrets.TARGET_GROUP_ARN }}
+          ECS_SERVICE: my-nginx-green-service
+          GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
           PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
           SECURITY_GROUP: sg-0e2f023a42da0b442
         run: |
-          aws ecs update-service \
+          aws ecs create-service \
             --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
+            --service-name $ECS_SERVICE \
             --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
             --desired-count 1 \
-            --load-balancers targetGroupArn=$TARGET_GROUP_ARN,containerName=my-nginx-app,containerPort=80 \
-            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
+            --load-balancers targetGroupArn=$GREEN_TARGET_GROUP_ARN,containerName=my-nginx-app,containerPort=80 \
+            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}" \
+            --launch-type FARGATE || true
 
-      - name: Verify Deployment
+      - name: Verify Green Deployment
         env:
-          ALB_DNS: my-nginx-alb-1798249720.us-east-1.elb.amazonaws.com
+          GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
         run: |
           # Wait for service stability with longer timeout
           aws ecs wait services-stable \
-            --cluster my-nginx-prod-cluster \
-            --services my-nginx-prod-service \
+            --cluster $ECS_CLUSTER \
+            --services my-nginx-green-service
 
           # Get current target group ARN
-          TARGET_GROUP_ARN=$(aws ecs describe-services \
-            --cluster my-nginx-prod-cluster \
-            --services my-nginx-prod-service \
-            --query 'services[0].loadBalancers[0].targetGroupArn' \
-            --output text)
+          TARGET_GROUP_ARN=$GREEN_TARGET_GROUP_ARN
 
           # Wait for target group to have healthy targets
           max_attempts=10
@@ -91,7 +106,7 @@ jobs:
           done
 
           # HTTP request to verify application
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.ALB_DNS }})
 
           # Check conditions
           if [ $attempt -eq $max_attempts ] || [ "$RESPONSE" != "200" ]; then
@@ -101,4 +116,33 @@ jobs:
             exit 1
           fi
 
-          echo "Deployment verified successfully"
+          echo "Green Deployment verified successfully"
+
+      - name: Switch Traffic to Green
+        run: |
+          aws elbv2 modify-listener \
+            --listener-arn ${{ secrets.LISTENER_ARN }} \
+            --default-actions Type=forward,TargetGroupArn=${{ secrets.GREEN_TARGET_GROUP_ARN }}
+
+      - name: Clean Up Old Blue Service
+        run: |
+          aws ecs delete-service \
+            --cluster $ECS_CLUSTER \
+            --service my-nginx-prod-service \
+            --force || true
+
+      - name: Verify Final Deployment
+        env:
+          ALB_DNS: ${{ secrets.ALB_DNS }}
+        run: |
+          # Wait for load balancer to route to new service
+          sleep 30
+
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Final deployment verification failed"
+            exit 1
+          fi
+
+          echo "Blue-Green deployment completed successfully"
