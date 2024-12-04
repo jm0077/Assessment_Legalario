@@ -125,9 +125,6 @@ jobs:
         }
         EOF
 
-        # Display the generated task definition
-        cat task-definition.json
-
     - name: Build, tag, and push image to Amazon ECR
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -173,10 +170,7 @@ jobs:
         ECS_CLUSTER: my-nginx-prod-cluster
         CONTAINER_NAME: my-nginx-app
       run: |
-        # Mostrar contenido de la definición de tarea antes de registrarla
-        cat task-definition.json
-
-        # Registrar definición de tarea con salida detallada
+        # Register task definition
         task_def=$(aws ecs register-task-definition \
           --cli-input-json file://task-definition.json \
           --query 'taskDefinition.taskDefinitionArn' \
