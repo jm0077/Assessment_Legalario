@@ -24,13 +24,55 @@ jobs:
     # Deploy to Production Fargate service
     
     # Run smoke tests and get approval
-  wait-for-approval:
+    - name: Create GitHub Issue for Approval
+      env:
+        GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      run: |
+        gh issue create \
+          --title "Approve Production Deployment" \
+          --body "Please review and approve the production deployment.
+
+          To approve:
+          - Comment '/approve' on this issue
+          - The deployment will start after approval
+
+          To deny:
+          - Comment '/deny' on this issue
+          - The deployment will be cancelled"
+
+    - name: Wait for Approval
+      env:
+        GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      run: |
+        # Esperar y verificar la aprobación
+        echo "Waiting for issue approval..."
+        
+        # Bucle para verificar comentarios del issue
+        while true; do
+          # Obtener los comentarios del último issue
+          COMMENTS=$(gh issue list --limit 1 | awk '{print $1}' | xargs -I {} gh issue view {} --comments)
+          
+          # Verificar si hay un comentario de aprobación
+          if echo "$COMMENTS" | grep -qE "(/approve|LGTM|looks good)"; then
+            echo "Deployment approved!"
+            exit 0
+          fi
+          
+          # Verificar si hay un comentario de denegación
+          if echo "$COMMENTS" | grep -q "/deny"; then
+            echo "Deployment denied!"
+            exit 1
+          fi
+          
+          # Esperar antes de la próxima verificación
+          sleep 30
+        done
+
+  deploy:
+    needs: wait-for-approval
     runs-on: ubuntu-latest
     steps:
-    - name: Approval Workflow
-      uses: convictional/trigger-workflow-and-wait@v1.6.1
-      with:
-        owner: ${{github.repository_owner}}
-        repo: ${{github.event.repository.name}}
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        workflow_file_name: approval.yml
+    - name: Deploy to Production
+      run: |
+        echo "Deploying to production..."
+        # Aquí añade tus pasos de despliegue
