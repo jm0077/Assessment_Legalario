@@ -60,13 +60,30 @@ jobs:
             --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-      - name: Delete Existing Green Service if Exists
+      - name: Force Delete Existing Green Service
         continue-on-error: true
         run: |
+          # First, set desired count to 0 to ensure service is fully drained
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $GREEN_SERVICE_NAME \
+            --desired-count 0
+
+          # Wait a few seconds to ensure draining completes
+          sleep 10
+
+          # Force delete the service
           aws ecs delete-service \
             --cluster $ECS_CLUSTER \
-            --service my-nginx-green-service \
-            --force || true
+            --service $GREEN_SERVICE_NAME \
+            --force
+
+      - name: Wait for Service Deletion
+        run: |
+          # Wait for the service to be fully deleted
+          aws ecs wait services-inactive \
+            --cluster $ECS_CLUSTER \
+            --services $GREEN_SERVICE_NAME
 
       - name: Create Green Service
         env:
@@ -76,7 +93,7 @@ jobs:
         run: |
           aws ecs create-service \
             --cluster $ECS_CLUSTER \
-            --service-name my-nginx-green-service \
+            --service-name $GREEN_SERVICE_NAME \
             --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
             --desired-count 1 \
             --launch-type FARGATE \
