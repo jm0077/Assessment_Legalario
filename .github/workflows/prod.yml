@@ -84,54 +84,57 @@ jobs:
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
-
-    - name: Install jq
-      run: sudo apt-get update && sudo apt-get install -y jq
         
     - name: Prepare Task Definition
       env:
-        TASK_ROLE_ARN: ${{ secrets.TASK_ROLE_ARN }}
-        EXECUTION_ROLE_ARN: ${{ secrets.TASK_EXECUTION_ROLE_ARN }}
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: my-nginx-app
         IMAGE_TAG: ${{ github.sha }}
+        TASK_ROLE_ARN: arn:aws:iam::908027419539:role/ecs-task-role
+        EXECUTION_ROLE_ARN: arn:aws:iam::908027419539:role/ecs-task-execution-role
       run: |
-        # Configurar roles de Terraform
-        TASK_ROLE_ARN="arn:aws:iam::908027419539:role/ecs-task-role"
-        EXECUTION_ROLE_ARN="arn:aws:iam::908027419539:role/ecs-task-execution-role"
-
-        # Crear archivo de definición de tarea con escape de caracteres
-        jq -n \
-          --arg family "my-nginx-task" \
-          --arg task_role "$TASK_ROLE_ARN" \
-          --arg exec_role "$EXECUTION_ROLE_ARN" \
-          --arg registry "$ECR_REGISTRY" \
-          --arg repo "$ECR_REPOSITORY" \
-          --arg tag "$IMAGE_TAG" \
-        '{
-          "family": $family,
-          "taskRoleArn": $task_role,
-          "executionRoleArn": $exec_role,
-          "containerDefinitions": [{
-            "name": "my-nginx-app",
-            "image": ($registry + "/" + $repo + ":" + $tag),
-            "portMappings": [{
-              "containerPort": 80,
-              "hostPort": 80,
-              "protocol": "tcp"
-            }],
-            "essential": true
-          }],
+        # Generar task definition escapando posibles caracteres problemáticos
+        IMAGE_URL=$(echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" | sed 's/[^a-zA-Z0-9./:_-]//g')
+        
+        # Mostrar información de depuración
+        echo "Registry: $ECR_REGISTRY"
+        echo "Repository: $ECR_REPOSITORY"
+        echo "Image Tag: $IMAGE_TAG"
+        echo "Image URL: $IMAGE_URL"
+        
+        # Crear definición de tarea con escape de caracteres
+        cat > task-definition.json << EOF
+        {
+          "family": "my-nginx-task",
+          "taskRoleArn": "$TASK_ROLE_ARN",
+          "executionRoleArn": "$EXECUTION_ROLE_ARN",
+          "containerDefinitions": [
+            {
+              "name": "my-nginx-app",
+              "image": "$IMAGE_URL",
+              "portMappings": [
+                {
+                  "containerPort": 80,
+                  "hostPort": 80,
+                  "protocol": "tcp"
+                }
+              ],
+              "essential": true
+            }
+          ],
           "networkMode": "awsvpc",
-          "requiresCompatibilities": ["FARGATE"],
+          "requiresCompatibilities": [
+            "FARGATE"
+          ],
           "cpu": "256",
           "memory": "512",
           "runtimePlatform": {
             "operatingSystemFamily": "LINUX"
           }
-        }' > task-definition.json
+        }
+        EOF
 
-        # Validar archivo generado
+        # Mostrar contenido del archivo
         cat task-definition.json
 
     - name: Build, tag, and push image to Amazon ECR
@@ -179,10 +182,16 @@ jobs:
         ECS_CLUSTER: my-nginx-prod-cluster
         CONTAINER_NAME: my-nginx-app
       run: |
+        # Mostrar contenido de la definición de tarea antes de registrarla
+        cat task-definition.json
+
+        # Registrar definición de tarea con salida detallada
         task_def=$(aws ecs register-task-definition \
           --cli-input-json file://task-definition.json \
           --query 'taskDefinition.taskDefinitionArn' \
           --output text)
+        
+        echo "Registered Task Definition ARN: $task_def"
         
         aws ecs update-service \
           --cluster $ECS_CLUSTER \
