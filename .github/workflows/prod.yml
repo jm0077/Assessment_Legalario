@@ -7,10 +7,11 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: 908027419539.dkr.ecr.us-east-1.amazonaws.com
-  ECR_REPOSITORY: my-nginx-app
-  ECS_CLUSTER: my-nginx-prod-cluster
-  ECS_SERVICE: my-nginx-prod-service
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }}
+  CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
+  SERVICE_PREFIX: ${{ secrets.SERVICE_PREFIX }}
 
 jobs:
   build:
@@ -30,7 +31,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v1
         id: login-ecr
 
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Build, tag, and push image to ECR
         env:
           IMAGE_TAG: latest
         run: |
@@ -63,12 +64,11 @@ jobs:
       - name: Create New Green Service
         env:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
-          PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
-          SECURITY_GROUP: sg-0e2f023a42da0b442
+          PUBLIC_SUBNET_IDS: ${{ secrets.PUBLIC_SUBNET_IDS }}
+          SECURITY_GROUP: ${{ secrets.SECURITY_GROUP_ID }}
         run: |
-          # Generar un nombre único para el servicio usando timestamp
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          NEW_SERVICE_NAME="my-nginx-green-service-${TIMESTAMP}"
+          NEW_SERVICE_NAME="${SERVICE_PREFIX}-${TIMESTAMP}"
           echo "new_service_name=${NEW_SERVICE_NAME}" >> $GITHUB_ENV
           
           aws ecs create-service \
@@ -78,36 +78,31 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}" \
-            --load-balancers targetGroupArn=$GREEN_TARGET_GROUP_ARN,containerName=my-nginx-app,containerPort=80
+            --load-balancers targetGroupArn=$GREEN_TARGET_GROUP_ARN,containerName=$CONTAINER_NAME,containerPort=80
 
       - name: Verify Green Deployment
         env:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
+          ALB_DNS: ${{ secrets.ALB_DNS }}
         run: |
-          # Esperar a que el servicio esté estable
           sleep 30
           
-          # Obtener el ARN de la tarea usando el nuevo nombre de servicio
           TASK_ARN=$(aws ecs list-tasks \
             --cluster $ECS_CLUSTER \
             --service-name ${{ env.new_service_name }} \
             --query 'taskArns[0]' \
             --output text)
 
-          # Debug: Print the task ARN
           echo "Task ARN: $TASK_ARN"
 
-          # Verificar si se obtuvo un ARN válido
           if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" == "null" ]; then
             echo "No se encontró ninguna tarea en ejecución"
             exit 1
           fi
 
-          # Wait for the specific task to reach a steady state
           max_attempts=20
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
-            # Describe the task to get its status
             TASK_STATUS=$(aws ecs describe-tasks \
               --cluster $ECS_CLUSTER \
               --tasks "$TASK_ARN" \
@@ -116,7 +111,6 @@ jobs:
 
             echo "Task Status: $TASK_STATUS"
 
-            # Check target group health
             TARGET_HEALTH=$(aws elbv2 describe-target-health \
               --target-group-arn $GREEN_TARGET_GROUP_ARN \
               --query 'TargetHealthDescriptions[0].TargetHealth.State' \
@@ -124,13 +118,11 @@ jobs:
 
             echo "Target Health: $TARGET_HEALTH"
 
-            # Break if task is RUNNING and target is healthy
             if [[ "$TASK_STATUS" == "RUNNING" ]] && [[ "$TARGET_HEALTH" == "healthy" ]]; then
               echo "Task is running and healthy"
               break
             fi
 
-            # Si la tarea falló, salir con error
             if [[ "$TASK_STATUS" == "STOPPED" ]]; then
               echo "Task stopped unexpectedly"
               exit 1
@@ -141,14 +133,12 @@ jobs:
             sleep 30
           done
 
-          # Verificar si se alcanzó el máximo de intentos
           if [ $attempt -eq $max_attempts ]; then
             echo "Se alcanzó el máximo número de intentos sin éxito"
             exit 1
           fi
 
-          # HTTP request to verify application
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.ALB_DNS }})
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" $ALB_DNS)
           echo "HTTP Response Code: $RESPONSE"
 
           if [ "$RESPONSE" != "200" ]; then
@@ -166,13 +156,11 @@ jobs:
 
       - name: Clean Up Old Services
         run: |
-          # Obtener lista de servicios antiguos
           SERVICES=$(aws ecs list-services \
             --cluster $ECS_CLUSTER \
             --query 'serviceArns[*]' \
             --output text)
           
-          # Eliminar servicios antiguos excepto el actual
           for SERVICE in $SERVICES; do
             SERVICE_NAME=$(basename $SERVICE)
             if [ "$SERVICE_NAME" != "${{ env.new_service_name }}" ]; then
@@ -188,9 +176,7 @@ jobs:
         env:
           ALB_DNS: ${{ secrets.ALB_DNS }}
         run: |
-          # Wait for load balancer to route to new service
           sleep 30
-
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
 
           if [ "$RESPONSE" != "200" ]; then
