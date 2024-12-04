@@ -93,33 +93,46 @@ jobs:
         ECR_REPOSITORY: my-nginx-app
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Debug: Mostrar valores de las variables
-        echo "ECR_REGISTRY: $ECR_REGISTRY"
-        echo "ECR_REPOSITORY: $ECR_REPOSITORY"
-        echo "IMAGE_TAG: $IMAGE_TAG"
-        
-        # Validar que las variables no estén vacías
-        if [ -z "$ECR_REGISTRY" ] || [ -z "$ECR_REPOSITORY" ] || [ -z "$IMAGE_TAG" ]; then
-          echo "Error: Alguna variable está vacía"
+        # Validar roles y registro
+        if [ -z "$TASK_ROLE_ARN" ] || [ -z "$EXECUTION_ROLE_ARN" ]; then
+          echo "Error: TASK_ROLE_ARN o EXECUTION_ROLE_ARN están vacíos"
           exit 1
         fi
 
-        # Crear una copia del archivo original para modificar
-        cp task-definition.json task-definition-modified.json
+        # Crear archivo de definición de tarea limpio
+        cat > task-definition.json << EOF
+        {
+          "family": "my-nginx-task",
+          "taskRoleArn": "$TASK_ROLE_ARN",
+          "executionRoleArn": "$EXECUTION_ROLE_ARN",
+          "containerDefinitions": [
+            {
+              "name": "my-nginx-app",
+              "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "portMappings": [
+                {
+                  "containerPort": 80,
+                  "hostPort": 80,
+                  "protocol": "tcp"
+                }
+              ],
+              "essential": true
+            }
+          ],
+          "networkMode": "awsvpc",
+          "requiresCompatibilities": [
+            "FARGATE"
+          ],
+          "cpu": "256",
+          "memory": "512",
+          "runtimePlatform": {
+            "operatingSystemFamily": "LINUX"
+          }
+        }
+        EOF
 
-        # Usar jq para reemplazar valores con precisión
-        jq --arg registry "$ECR_REGISTRY" \
-           --arg repository "$ECR_REPOSITORY" \
-           --arg tag "$IMAGE_TAG" \
-           --arg task_role "$TASK_ROLE_ARN" \
-           --arg exec_role "$EXECUTION_ROLE_ARN" \
-           '.taskRoleArn = $task_role | 
-            .executionRoleArn = $exec_role | 
-            .containerDefinitions[0].image = ($registry + "/" + $repository + ":" + $tag)' \
-           task-definition.json > task-definition-modified.json
-
-        # Mostrar el contenido del archivo modificado para depuración
-        cat task-definition-modified.json
+        # Validar archivo generado
+        cat task-definition.json
 
     - name: Build, tag, and push image to Amazon ECR
       env:
@@ -167,7 +180,7 @@ jobs:
         CONTAINER_NAME: my-nginx-app
       run: |
         task_def=$(aws ecs register-task-definition \
-          --cli-input-json file://task-definition-modified.json \
+          --cli-input-json file://task-definition.json \
           --query 'taskDefinition.taskDefinitionArn' \
           --output text)
         
