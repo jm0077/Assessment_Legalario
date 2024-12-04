@@ -138,6 +138,23 @@ resource "aws_lb_listener" "main" {
   }
 }
 
+# New listener rule to route to green target group
+resource "aws_lb_listener_rule" "green" {
+  listener_arn = aws_lb_listener.main.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.green.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/"]
+    }
+  }
+}
+
 # Creación del repositorio ECR para la app
 resource "aws_ecr_repository" "nginx_app" {
   name                 = "my-nginx-app"
@@ -317,4 +334,9 @@ output "security_group_id" {
 output "green_target_group_arn" {
   value       = aws_lb_target_group.green.arn
   description = "The ARN of the green target group for Blue-Green deployments"
+}
+
+output "green_listener_rule_arn" {
+  value       = aws_lb_listener_rule.green.arn
+  description = "The ARN of the green listener rule"
 }
