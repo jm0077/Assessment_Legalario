@@ -87,12 +87,31 @@ jobs:
         env:
           GREEN_TARGET_GROUP_ARN: ${{ secrets.GREEN_TARGET_GROUP_ARN }}
         run: |
-          # Retrieve the task ARN
-          TASK_ARN=$(aws ecs list-tasks \
+          # Retrieve the task ARNs
+          TASK_ARNS=$(aws ecs list-tasks \
             --cluster $ECS_CLUSTER \
             --service-name my-nginx-green-service \
-            --query 'taskArns[0]' \
-            --output text)
+            --query 'taskArns' \
+            --output json)
+
+          # Debug: Print out the task ARNs
+          echo "Retrieved Task ARNs: $TASK_ARNS"
+
+          # Check if task ARNs are empty
+          if [ "$TASK_ARNS" == "[]" ]; then
+            echo "No tasks found in the green service"
+            exit 1
+          fi
+
+          # Parse the first task ARN
+          TASK_ARN=$(echo $TASK_ARNS | jq -r '.[0]')
+
+          # Debug: Print the specific task ARN
+          echo "Selected Task ARN: $TASK_ARN"
+
+          # Verify task ARN length
+          TASK_ARN_LENGTH=${#TASK_ARN}
+          echo "Task ARN Length: $TASK_ARN_LENGTH"
 
           # Wait for the specific task to reach a steady state
           max_attempts=20
@@ -101,15 +120,21 @@ jobs:
             # Describe the task to get its status
             TASK_STATUS=$(aws ecs describe-tasks \
               --cluster $ECS_CLUSTER \
-              --tasks $TASK_ARN \
+              --tasks "$TASK_ARN" \
               --query 'tasks[0].lastStatus' \
               --output text)
+
+            # Debug: Print task status
+            echo "Task Status: $TASK_STATUS"
 
             # Check target group health
             TARGET_HEALTH=$(aws elbv2 describe-target-health \
               --target-group-arn $GREEN_TARGET_GROUP_ARN \
               --query 'TargetHealthDescriptions[*].TargetHealth.State' \
               --output text)
+
+            # Debug: Print target health
+            echo "Target Health: $TARGET_HEALTH"
 
             # Break if task is RUNNING and target is HEALTHY
             if [[ "$TASK_STATUS" == "RUNNING" ]] && [[ "$TARGET_HEALTH" == *"healthy"* ]]; then
@@ -122,6 +147,9 @@ jobs:
 
           # HTTP request to verify application
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.ALB_DNS }})
+
+          # Debug: Print HTTP response
+          echo "HTTP Response Code: $RESPONSE"
 
           # Check conditions
           if [ $attempt -eq $max_attempts ] || [ "$RESPONSE" != "200" ]; then
