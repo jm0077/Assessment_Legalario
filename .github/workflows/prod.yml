@@ -57,49 +57,49 @@ jobs:
             --load-balancers targetGroupArn=$TARGET_GROUP_ARN,containerName=my-nginx-app,containerPort=80 \
             --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
 
-    - name: Verify Deployment
-      env:
-        ALB_DNS: my-nginx-alb-1798249720.us-east-1.elb.amazonaws.com
-      run: |
-        # Wait for service stability with longer timeout
-        aws ecs wait services-stable \
-          --cluster my-nginx-prod-cluster \
-          --services my-nginx-prod-service \
-          --max-attempts 30
+      - name: Verify Deployment
+        env:
+          ALB_DNS: my-nginx-alb-1798249720.us-east-1.elb.amazonaws.com
+        run: |
+          # Wait for service stability with longer timeout
+          aws ecs wait services-stable \
+            --cluster my-nginx-prod-cluster \
+            --services my-nginx-prod-service \
+            --max-attempts 30
 
-        # Get current target group ARN
-        TARGET_GROUP_ARN=$(aws ecs describe-services \
-          --cluster my-nginx-prod-cluster \
-          --services my-nginx-prod-service \
-          --query 'services[0].loadBalancers[0].targetGroupArn' \
-          --output text)
-
-        # Wait for target group to have healthy targets
-        max_attempts=10
-        attempt=0
-        while [ $attempt -lt $max_attempts ]; do
-          TARGET_HEALTH=$(aws elbv2 describe-target-health \
-            --target-group-arn $TARGET_GROUP_ARN \
-            --query 'TargetHealthDescriptions[*].TargetHealth.State' \
+          # Get current target group ARN
+          TARGET_GROUP_ARN=$(aws ecs describe-services \
+            --cluster my-nginx-prod-cluster \
+            --services my-nginx-prod-service \
+            --query 'services[0].loadBalancers[0].targetGroupArn' \
             --output text)
 
-          if [[ "$TARGET_HEALTH" == *"healthy"* ]]; then
-            break
+          # Wait for target group to have healthy targets
+          max_attempts=10
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            TARGET_HEALTH=$(aws elbv2 describe-target-health \
+              --target-group-arn $TARGET_GROUP_ARN \
+              --query 'TargetHealthDescriptions[*].TargetHealth.State' \
+              --output text)
+
+            if [[ "$TARGET_HEALTH" == *"healthy"* ]]; then
+              break
+            fi
+
+            attempt=$((attempt + 1))
+            sleep 30
+          done
+
+          # HTTP request to verify application
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
+
+          # Check conditions
+          if [ $attempt -eq $max_attempts ] || [ "$RESPONSE" != "200" ]; then
+            echo "Deployment verification failed:"
+            echo "Target Group Health: $TARGET_HEALTH"
+            echo "HTTP Response: $RESPONSE"
+            exit 1
           fi
 
-          attempt=$((attempt + 1))
-          sleep 30
-        done
-
-        # HTTP request to verify application
-        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
-
-        # Check conditions
-        if [ $attempt -eq $max_attempts ] || [ "$RESPONSE" != "200" ]; then
-          echo "Deployment verification failed:"
-          echo "Target Group Health: $TARGET_HEALTH"
-          echo "HTTP Response: $RESPONSE"
-          exit 1
-        fi
-
-        echo "Deployment verified successfully"
+          echo "Deployment verified successfully"
