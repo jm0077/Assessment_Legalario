@@ -14,7 +14,51 @@ env:
   SERVICE_PREFIX: ${{ secrets.SERVICE_PREFIX }}
 
 jobs:
+  create-approval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Create Approval Issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Approve Production Deployment" \
+            --body "A new deployment is ready for production.
+            Details:
+            - Repository: ${{ github.repository }}
+            - Commit: ${{ github.sha }}
+            - Branch: ${{ github.ref_name }}
+            To approve this deployment:
+            - Comment '/approve' on this issue
+            To deny:
+            - Comment '/deny' on this issue"
+      - name: Wait for Approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          max_attempts=30
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            ISSUE=$(gh issue list --limit 1)
+            ISSUE_NUMBER=$(echo "$ISSUE" | awk '{print $1}')
+            COMMENTS=$(gh issue view $ISSUE_NUMBER --comments)
+            if echo "$COMMENTS" | grep -qE "(/approve|LGTM|looks good)"; then
+              echo "Deployment approved!"
+              exit 0
+            fi
+            if echo "$COMMENTS" | grep -q "/deny"; then
+              echo "Deployment denied!"
+              exit 1
+            fi
+            sleep 30
+            attempt=$((attempt + 1))
+          done
+          echo "Approval timeout reached"
+          exit 1
+
   build:
+    needs: create-approval
     runs-on: ubuntu-latest
 
     steps:
