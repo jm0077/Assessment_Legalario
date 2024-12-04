@@ -93,9 +93,15 @@ jobs:
         ECR_REPOSITORY: my-nginx-app
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Validar roles y registro
-        if [ -z "$TASK_ROLE_ARN" ] || [ -z "$EXECUTION_ROLE_ARN" ]; then
-          echo "Error: TASK_ROLE_ARN o EXECUTION_ROLE_ARN están vacíos"
+        # Verificar y proporcionar un valor predeterminado para EXECUTION_ROLE_ARN
+        if [ -z "$EXECUTION_ROLE_ARN" ]; then
+          # Usar el mismo rol de tarea si no se especifica un rol de ejecución
+          EXECUTION_ROLE_ARN="$TASK_ROLE_ARN"
+        fi
+
+        # Validar TASK_ROLE_ARN
+        if [ -z "$TASK_ROLE_ARN" ]; then
+          echo "Error: TASK_ROLE_ARN está vacío"
           exit 1
         fi
 
