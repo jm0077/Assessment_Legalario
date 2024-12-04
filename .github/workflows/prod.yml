@@ -7,7 +7,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }}
   CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
