@@ -62,50 +62,74 @@ jobs:
           echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
       - name: Force Delete Existing Green Service
-        continue-on-error: true
         run: |
-          # First, set desired count to 0 to ensure service is fully drained
-          aws ecs update-service \
+          # Verificar si el servicio existe
+          SERVICE_STATUS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
-            --service $GREEN_SERVICE_NAME \
-            --desired-count 0
-
-          # Wait a few seconds to ensure draining completes
-          sleep 10
-
-          # Force delete the service
-          aws ecs delete-service \
-            --cluster $ECS_CLUSTER \
-            --service $GREEN_SERVICE_NAME \
-            --force
+            --services $GREEN_SERVICE_NAME \
+            --query 'services[0].status' \
+            --output text 2>/dev/null || echo "INACTIVE")
+          
+          if [ "$SERVICE_STATUS" != "INACTIVE" ]; then
+            # Primero, actualizar el servicio a 0 tareas
+            aws ecs update-service \
+              --cluster $ECS_CLUSTER \
+              --service $GREEN_SERVICE_NAME \
+              --desired-count 0
+            
+            # Esperar a que las tareas se detengan
+            echo "Waiting for tasks to stop..."
+            aws ecs wait services-stable \
+              --cluster $ECS_CLUSTER \
+              --services $GREEN_SERVICE_NAME
+            
+            # Ahora sí, eliminar el servicio
+            aws ecs delete-service \
+              --cluster $ECS_CLUSTER \
+              --service $GREEN_SERVICE_NAME \
+              --force
+          fi
 
       - name: Wait for Service Deletion
         run: |
-          # Establecer un contador para el timeout de 1 minuto
-          timeout=60
-          interval=5
-          elapsed=0
+          max_attempts=12
+          attempt=0
           
-          while [ $elapsed -lt $timeout ]; do
-            # Verificar si el servicio existe
-            SERVICE_STATUS=$(aws ecs describe-services \
+          while [ $attempt -lt $max_attempts ]; do
+            # Verificar si el servicio existe y su estado
+            SERVICE_CHECK=$(aws ecs describe-services \
               --cluster $ECS_CLUSTER \
               --services $GREEN_SERVICE_NAME \
-              --query 'services[0].status' \
-              --output text 2>/dev/null || echo "INACTIVE")
+              --query 'services[0].[status,runningCount]' \
+              --output text 2>/dev/null || echo "INACTIVE 0")
             
-            if [ "$SERVICE_STATUS" == "INACTIVE" ] || [ "$SERVICE_STATUS" == "None" ]; then
-              echo "Service deleted successfully"
-              exit 0
+            STATUS=$(echo $SERVICE_CHECK | cut -d' ' -f1)
+            RUNNING_COUNT=$(echo $SERVICE_CHECK | cut -d' ' -f2)
+            
+            echo "Service Status: $STATUS, Running Tasks: $RUNNING_COUNT"
+            
+            if [ "$STATUS" == "INACTIVE" ] || [ "$STATUS" == "NONE" ]; then
+              echo "Service is fully deleted"
+              break
             fi
             
-            echo "Waiting for service deletion... ($elapsed seconds elapsed)"
-            sleep $interval
-            elapsed=$((elapsed + interval))
+            if [ "$RUNNING_COUNT" == "0" ]; then
+              echo "No running tasks, service should be safe to replace"
+              break
+            fi
+            
+            attempt=$((attempt + 1))
+            if [ $attempt -eq $max_attempts ]; then
+              echo "Timeout reached, but proceeding since no running tasks"
+              break
+            fi
+            
+            echo "Attempt $attempt of $max_attempts, waiting 5 seconds..."
+            sleep 5
           done
           
-          echo "Timeout reached waiting for service deletion, continuing anyway..."
-          exit 0
+          # Esperar 10 segundos adicionales para asegurar que AWS haya procesado la eliminación
+          sleep 10
 
       - name: Create Green Service
         env:
