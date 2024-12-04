@@ -108,14 +108,14 @@ jobs:
           # Verificar si el servicio ya existe
           SERVICE_EXISTS=$(aws ecs describe-services --cluster my-nginx-prod-cluster --services my-nginx-prod-green --query 'services[0].serviceName' --output text)
           
-          if [ "$SERVICE_EXISTS" != "my-nginx-prod-green" ]; then
-            echo "create" >> $GITHUB_ENV
+          if [ "$SERVICE_EXISTS" == "None" ]; then
+            echo "ACTION=create" >> $GITHUB_ENV
           else
-            echo "update" >> $GITHUB_ENV
+            echo "ACTION=update" >> $GITHUB_ENV
           fi
 
       - name: Create Target Group for Green Environment
-        if: env.create == 'create'
+        if: env.ACTION == 'create'
         env:
           VPC_ID: ${{ secrets.VPC_ID }}
         run: |
@@ -132,7 +132,7 @@ jobs:
           echo "TARGET_GROUP_ARN=$TARGET_GROUP_ARN" >> $GITHUB_ENV
 
       - name: Deploy to Fargate Green Environment (Create Service)
-        if: env.create == 'create'
+        if: env.ACTION == 'create'
         env:
           ECS_SERVICE: my-nginx-prod-green
           ECS_CLUSTER: my-nginx-prod-cluster
@@ -155,7 +155,7 @@ jobs:
             --network-configuration "awsvpcConfiguration={subnets=[subnet-xxxxxx],securityGroups=[sg-xxxxxx],assignPublicIp=ENABLED}"
 
       - name: Deploy to Fargate Green Environment (Update Service)
-        if: env.create == 'update'
+        if: env.ACTION == 'update'
         env:
           ECS_SERVICE: my-nginx-prod-green
           ECS_CLUSTER: my-nginx-prod-cluster
