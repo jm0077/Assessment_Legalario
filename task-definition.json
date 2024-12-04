@@ -5,7 +5,7 @@
   "containerDefinitions": [
     {
       "name": "my-nginx-app",
-      "image": "908027419539.dkr.ecr.us-east-1.amazonaws.com/my-nginx-app:latest", 
+      "image": "908027419539.dkr.ecr.us-east-1.amazonaws.com/my-nginx-app:${{ github.sha }}", 
       "portMappings": [
         {
           "containerPort": 80,
