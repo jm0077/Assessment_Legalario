@@ -25,9 +25,56 @@ jobs:
     
     # Run smoke tests and get approval
     - name: Request Production Approval
-      uses: trstringer/manual-approval@v1
+      uses: actions/github-script@v6
       with:
-        secret: ${{ secrets.MY_SECRET }}
-        approvers: "jm0077"
-        github_token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-        minimum_approvals: 1  # Especificar explícitamente el número de aprobaciones requeridas
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const { owner, repo } = context.repo;
+          const runId = context.runId;
+          
+          // Crear un issue para aprobación manual
+          const issue = await github.rest.issues.create({
+            owner,
+            repo,
+            title: `Manual Approval Required for Workflow Run ${runId}`,
+            body: `This workflow requires manual approval.\n\nWorkflow Run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${runId}\n\nTo approve, comment \`/approve\` on this issue.\nTo deny, comment \`/deny\`.`
+          });
+
+          // Esperar a que se apruebe o deniegue el issue
+          const { data: comments } = await github.rest.issues.listComments({
+            owner,
+            repo,
+            issue_number: issue.data.number
+          });
+
+          const approvalComment = comments.find(comment => 
+            comment.body.trim().toLowerCase() === '/approve'
+          );
+
+          const denialComment = comments.find(comment => 
+            comment.body.trim().toLowerCase() === '/deny'
+          );
+
+          if (denialComment) {
+            core.setFailed('Deployment denied');
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: issue.data.number,
+              state: 'closed'
+            });
+            return;
+          }
+
+          if (!approvalComment) {
+            core.setFailed('No approval received');
+            return;
+          }
+
+          // Cerrar el issue si se aprueba
+          await github.rest.issues.update({
+            owner,
+            repo,
+            issue_number: issue.data.number,
+            state: 'closed'
+          });
