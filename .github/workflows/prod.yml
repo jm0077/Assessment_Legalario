@@ -24,10 +24,13 @@ jobs:
     # Deploy to Production Fargate service
     
     # Run smoke tests and get approval
-    - name: Wait for Approval
-      uses: trstringer/manual-approval@v1
+  wait-for-approval:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Approval Workflow
+      uses: convictional/trigger-workflow-and-wait@v1.6.1
       with:
-        secret: ${{ secrets.GITHUB_TOKEN }}
-        approvers: jm0077
-        minimum_approvals: 1
-        issue-body: "Por favor, revisa y aprueba el despliegue a producción."
+        owner: ${{github.repository_owner}}
+        repo: ${{github.event.repository.name}}
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        workflow_file_name: approval.yml
