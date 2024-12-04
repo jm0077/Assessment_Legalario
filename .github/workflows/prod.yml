@@ -65,7 +65,6 @@ jobs:
           aws ecs wait services-stable \
             --cluster my-nginx-prod-cluster \
             --services my-nginx-prod-service \
-            --max-attempts 30
 
           # Get current target group ARN
           TARGET_GROUP_ARN=$(aws ecs describe-services \
