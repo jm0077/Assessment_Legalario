@@ -2,6 +2,7 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# Creación de VPC
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
   tags = {
@@ -9,6 +10,7 @@ resource "aws_vpc" "main" {
   }
 }
 
+# Creación de subredes públicas
 resource "aws_subnet" "public_1" {
   vpc_id     = aws_vpc.main.id
   cidr_block = "10.0.1.0/24"
@@ -36,6 +38,7 @@ resource "aws_subnet" "public_3" {
   }
 }
 
+# Creación de Internet Gateway
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
   tags = {
@@ -43,6 +46,7 @@ resource "aws_internet_gateway" "gw" {
   }
 }
 
+# Creación de la tabla de enrutamiento
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -54,6 +58,7 @@ resource "aws_route_table" "public" {
   }
 }
 
+# Asociaciones de subredes con la tabla de enrutamiento
 resource "aws_route_table_association" "public_1" {
   subnet_id      = aws_subnet.public_1.id
   route_table_id = aws_route_table.public.id
@@ -69,6 +74,7 @@ resource "aws_route_table_association" "public_3" {
   route_table_id = aws_route_table.public.id
 }
 
+# Creación de grupo de seguridad
 resource "aws_security_group" "allow_http" {
   name   = "Allow HTTP"
   vpc_id = aws_vpc.main.id
@@ -86,6 +92,7 @@ resource "aws_security_group" "allow_http" {
   }
 }
 
+# Creación de Load Balancer
 resource "aws_lb" "main" {
   name               = "my-nginx-alb"
   internal           = false
@@ -94,6 +101,7 @@ resource "aws_lb" "main" {
   subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id, aws_subnet.public_3.id]
 }
 
+# Creación de Target Group
 resource "aws_lb_target_group" "main" {
   name        = "my-nginx-tg"
   port        = 80
@@ -102,6 +110,7 @@ resource "aws_lb_target_group" "main" {
   target_type = "ip"
 }
 
+# Listener del Load Balancer
 resource "aws_lb_listener" "main" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80
@@ -112,6 +121,7 @@ resource "aws_lb_listener" "main" {
   }
 }
 
+# Creación del repositorio ECR para la app
 resource "aws_ecr_repository" "nginx_app" {
   name                 = "my-nginx-app"
   image_tag_mutability = "MUTABLE"
@@ -121,7 +131,12 @@ resource "aws_ecr_repository" "nginx_app" {
   }
 }
 
-# IAM Role for ECS Task Execution
+# Creación del ECS Cluster
+resource "aws_ecs_cluster" "main" {
+  name = "my-nginx-prod-cluster"
+}
+
+# IAM Role para ejecución de tareas de ECS
 resource "aws_iam_role" "ecs_task_execution_role" {
   name = "ecs-task-execution-role"
 
@@ -139,13 +154,13 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 }
 
-# Attach Amazon ECS Task Execution Role Policy
+# Adjuntar política de ejecución de tareas
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   role       = aws_iam_role.ecs_task_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# IAM Role for ECS Tasks
+# IAM Role para tareas ECS
 resource "aws_iam_role" "ecs_task_role" {
   name = "ecs-task-role"
 
@@ -163,7 +178,7 @@ resource "aws_iam_role" "ecs_task_role" {
   })
 }
 
-# Optional: Add specific permissions for the task role
+# Adjuntar permisos específicos para el rol de tarea
 resource "aws_iam_role_policy" "ecs_task_role_policy" {
   name = "ecs-task-role-policy"
   role = aws_iam_role.ecs_task_role.id
@@ -185,13 +200,17 @@ resource "aws_iam_role_policy" "ecs_task_role_policy" {
   })
 }
 
-# Outputs for the roles (to be used in task definition)
+# Outputs para usar en la definición de tareas
 output "task_execution_role_arn" {
   value = aws_iam_role.ecs_task_execution_role.arn
 }
 
 output "task_role_arn" {
   value = aws_iam_role.ecs_task_role.arn
+}
+
+output "ecs_cluster_name" {
+  value = aws_ecs_cluster.main.name
 }
 
 output "vpc_id" {
