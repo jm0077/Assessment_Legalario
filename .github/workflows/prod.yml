@@ -68,7 +68,7 @@ jobs:
 
           # Check target group health
           TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
-            --names my-nginx-target-group \
+            --names my-nginx-tg \
             --query 'TargetGroups[0].TargetGroupArn' \
             --output text)
 
