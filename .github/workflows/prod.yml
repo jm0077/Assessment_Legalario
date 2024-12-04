@@ -102,92 +102,81 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Determine Current Active Service
-        id: current-service
-        run: |
-          CURRENT_SERVICE=$(aws ecs describe-services \
-            --cluster my-nginx-prod-cluster \
-            --services my-nginx-service \
-            --query 'services[0].serviceName' \
-            --output text)
-          
-          if [ "$CURRENT_SERVICE" == "my-nginx-service" ]; then
-            echo "BLUE_SERVICE=my-nginx-service" >> $GITHUB_ENV
-            echo "GREEN_SERVICE=my-nginx-service-green" >> $GITHUB_ENV
-          else
-            echo "BLUE_SERVICE=my-nginx-service-green" >> $GITHUB_ENV
-            echo "GREEN_SERVICE=my-nginx-service" >> $GITHUB_ENV
-          fi
-
-      - name: Create Green Service if Not Exists
-        run: |
-          if ! aws ecs describe-services \
-            --cluster my-nginx-prod-cluster \
-            --services ${{ env.GREEN_SERVICE }} \
-            2>/dev/null; then
-            
-            aws ecs create-service \
-              --cluster my-nginx-prod-cluster \
-              --service-name ${{ env.GREEN_SERVICE }} \
-              --task-definition my-nginx-task:latest \
-              --desired-count 1 \
-              --launch-type FARGATE \
-              --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PUBLIC_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP }}],assignPublicIp=ENABLED}"
-          fi
-
-      - name: Update Green Service with New Image
+      - name: Prepare Green Deployment
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: my-nginx-app
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Update task definition with new image
+          # Create or update task definition with new image
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition my-nginx-task \
+            --query "taskDefinition.{family: family, revision: revision}" \
+            --output text)
+          
+          FAMILY=$(echo $TASK_DEF | awk '{print $1}')
+          REVISION=$(echo $TASK_DEF | awk '{print $2}')
+          
           NEW_TASK_DEF=$(aws ecs register-task-definition \
-            --family my-nginx-task \
+            --family $FAMILY \
+            --cli-input-json file://task-definition.json \
             --container-definitions "[{
               \"name\": \"nginx-container\",
-              \"image\": \"$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}\",
+              \"image\": \"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\",
               \"portMappings\": [{
                 \"containerPort\": 80,
                 \"hostPort\": 80,
                 \"protocol\": \"tcp\"
               }]
             }]" \
-            --requires-compatibilities FARGATE \
-            --network-mode awsvpc \
-            --cpu 256 \
-            --memory 512 \
-            --execution-role-arn ${{ secrets.EXECUTION_ROLE_ARN }} \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
-          aws ecs update-service \
+          # Ensure green service exists or create it
+          GREEN_SERVICE="my-nginx-service-green"
+          
+          # Check if green service exists
+          if ! aws ecs describe-services \
             --cluster my-nginx-prod-cluster \
-            --service ${{ env.GREEN_SERVICE }} \
-            --task-definition $NEW_TASK_DEF
+            --services $GREEN_SERVICE \
+            2>/dev/null; then
+            
+            aws ecs create-service \
+              --cluster my-nginx-prod-cluster \
+              --service-name $GREEN_SERVICE \
+              --task-definition $NEW_TASK_DEF \
+              --desired-count 1 \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf],securityGroups=[sg-0e2f023a42da0b442],assignPublicIp=ENABLED}"
+          else
+            # Update existing green service
+            aws ecs update-service \
+              --cluster my-nginx-prod-cluster \
+              --service $GREEN_SERVICE \
+              --task-definition $NEW_TASK_DEF
+          fi
 
-      - name: Perform Health Checks on Green Service
+      - name: Wait for Green Service Stability
         run: |
-          # Implement your health check logic here
-          # For example, wait for service to stabilize and pass health checks
           aws ecs wait services-stable \
             --cluster my-nginx-prod-cluster \
-            --services ${{ env.GREEN_SERVICE }}
+            --services my-nginx-service-green
 
-      - name: Swap Services
+      - name: Swap Traffic to Green Service
         run: |
-          # Stop the blue service
-          aws ecs update-service \
-            --cluster my-nginx-prod-cluster \
-            --service ${{ env.BLUE_SERVICE }} \
-            --desired-count 0
-
-          # Update load balancer to point to new service
+          # Get the target group for the green service
           TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
             --names my-nginx-tg \
             --query 'TargetGroups[0].TargetGroupArn' \
             --output text)
 
-          # Modify load balancer listener
+          # Update load balancer listener to point to green service
           aws elbv2 modify-listener \
             --listener-arn ${{ secrets.LISTENER_ARN }} \
             --default-actions Type=forward,TargetGroupArn=$TARGET_GROUP_ARN
+
+          # Optional: Scale down blue service
+          aws ecs update-service \
+            --cluster my-nginx-prod-cluster \
+            --service my-nginx-service \
+            --desired-count 0
