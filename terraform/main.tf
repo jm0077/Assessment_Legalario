@@ -230,7 +230,7 @@ resource "aws_ecs_service" "main" {
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.main.arn
   desired_count   = 1
-  launch_type     = "EC2"
+  launch_type     = "FARGATE"
 
   load_balancer {
     target_group_arn = aws_lb_target_group.main.arn
@@ -239,8 +239,9 @@ resource "aws_ecs_service" "main" {
   }
 
   network_configuration {
-    subnets          = [aws_subnet.public_1.id]
+    subnets          = [aws_subnet.public_1.id, aws_subnet.public_2.id, aws_subnet.public_3.id]  # Múltiples subredes
     security_groups = [aws_security_group.allow_http.id]
+	assign_public_ip = true
   }
 
   depends_on = [aws_lb_listener.main]

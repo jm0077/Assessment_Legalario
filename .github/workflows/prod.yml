@@ -180,7 +180,6 @@ jobs:
       - name: Run Smoke Tests
         run: |
           ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --names my-nginx-alb \
             --query 'LoadBalancers[0].DNSName' \
             --output text)
 
