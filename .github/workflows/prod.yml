@@ -148,7 +148,7 @@ jobs:
           
           aws ecs create-service \
             --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
+            --service-name $ECS_SERVICE \
             --task-definition $task_def \
             --desired-count 1 \
             --launch-type FARGATE \
@@ -171,7 +171,7 @@ jobs:
           
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
+            --service-name $ECS_SERVICE \
             --task-definition $task_def \
             --desired-count 1
 
