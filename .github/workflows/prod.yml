@@ -1,14 +1,11 @@
 name: Production Workflow  
-
 on:
   push:
     branches: [master]
 
 jobs:
-
-  deploy_prod:
+  build-and-prepare:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v2
     
@@ -18,61 +15,97 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
-        
-    # Build and push Docker image
     
-    # Deploy to Production Fargate service
+    # Placeholder para construcción de imagen Docker
+    - name: Build Docker image
+      run: |
+        echo "Building Docker image..."
+        # Añade aquí tus comandos de construcción de imagen
     
-    # Run smoke tests and get approval
-    - name: Create GitHub Issue for Approval
+    # Placeholder para push de imagen a ECR
+    - name: Push to ECR
+      run: |
+        echo "Pushing image to ECR..."
+        # Añade aquí tus comandos de push de imagen
+
+  wait-for-approval:
+    needs: build-and-prepare
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create Approval Issue
       env:
-        GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh issue create \
           --title "Approve Production Deployment" \
-          --body "Please review and approve the production deployment.
+          --body "A new deployment is ready for production.
 
-          To approve:
+          Details:
+          - Repository: ${{ github.repository }}
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+
+          To approve this deployment:
           - Comment '/approve' on this issue
-          - The deployment will start after approval
-
+          
           To deny:
-          - Comment '/deny' on this issue
-          - The deployment will be cancelled"
+          - Comment '/deny' on this issue"
 
     - name: Wait for Approval
       env:
-        GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         # Esperar y verificar la aprobación
-        echo "Waiting for issue approval..."
+        max_attempts=30  # Aproximadamente 15 minutos de espera
+        attempt=0
         
-        # Bucle para verificar comentarios del issue
-        while true; do
-          # Obtener los comentarios del último issue
-          COMMENTS=$(gh issue list --limit 1 | awk '{print $1}' | xargs -I {} gh issue view {} --comments)
+        while [ $attempt -lt $max_attempts ]; do
+          # Obtener el último issue
+          ISSUE=$(gh issue list --limit 1)
+          ISSUE_NUMBER=$(echo "$ISSUE" | awk '{print $1}')
           
-          # Verificar si hay un comentario de aprobación
+          # Verificar comentarios del issue
+          COMMENTS=$(gh issue view $ISSUE_NUMBER --comments)
+          
+          # Verificar aprobación
           if echo "$COMMENTS" | grep -qE "(/approve|LGTM|looks good)"; then
             echo "Deployment approved!"
             exit 0
           fi
           
-          # Verificar si hay un comentario de denegación
+          # Verificar denegación
           if echo "$COMMENTS" | grep -q "/deny"; then
             echo "Deployment denied!"
             exit 1
           fi
           
-          # Esperar antes de la próxima verificación
+          # Esperar 30 segundos
           sleep 30
+          attempt=$((attempt + 1))
         done
+        
+        echo "Approval timeout reached"
+        exit 1
 
   deploy:
     needs: wait-for-approval
     runs-on: ubuntu-latest
     steps:
-    - name: Deploy to Production
+    - uses: actions/checkout@v2
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    
+    - name: Deploy to Fargate
       run: |
-        echo "Deploying to production..."
-        # Aquí añade tus pasos de despliegue
+        echo "Deploying to Fargate..."
+        # Añade aquí tus comandos de despliegue a Fargate
+    
+    - name: Run Smoke Tests
+      run: |
+        echo "Running smoke tests..."
+        # Añade aquí tus pruebas de humo
