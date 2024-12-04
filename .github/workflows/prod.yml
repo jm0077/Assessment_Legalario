@@ -25,9 +25,9 @@ jobs:
     
     # Run smoke tests and get approval
     - name: Request Production Approval
-      uses: actions/github-script@v6
+      uses: trstringer/manual-approval@v1
       with:
-        github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-        script: |
-          // Lógica de aprobación manual personalizada
-          console.log('Requiere aprobación manual')
+        secret: ${{ secrets.MY_SECRET }}
+        approvers: "jm0077"
+        github_token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        minimum_approvals: 1  # Especificar explícitamente el número de aprobaciones requeridas
