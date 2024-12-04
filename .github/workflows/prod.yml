@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  create-or-update-service:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,22 +18,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-
-      - name: Check if ECS Service Exists
-        id: check-service
-        run: |
-          set +e
-          SERVICE_EXISTS=$(aws ecs describe-services \
-            --cluster my-nginx-prod-cluster \
-            --services my-nginx-prod-service \
-            --query 'services[0].serviceName' \
-            --output text)
-          
-          if [ "$SERVICE_EXISTS" == "None" ]; then
-            echo "service_exists=false" >> $GITHUB_OUTPUT
-          else
-            echo "service_exists=true" >> $GITHUB_OUTPUT
-          fi
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
@@ -57,24 +41,7 @@ jobs:
             --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-      - name: Create ECS Service
-        if: steps.check-service.outputs.service_exists == 'false'
-        env:
-          ECS_SERVICE: my-nginx-prod-service
-          ECS_CLUSTER: my-nginx-prod-cluster
-          PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
-          SECURITY_GROUP: sg-0e2f023a42da0b442
-        run: |
-          aws ecs create-service \
-            --cluster $ECS_CLUSTER \
-            --service-name $ECS_SERVICE \
-            --task-definition ${{ steps.task-def.outputs.task_def_arn }} \
-            --launch-type FARGATE \
-            --desired-count 1 \
-            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
-
       - name: Update ECS Service
-        if: steps.check-service.outputs.service_exists == 'true'
         env:
           ECS_SERVICE: my-nginx-prod-service
           ECS_CLUSTER: my-nginx-prod-cluster
@@ -87,13 +54,12 @@ jobs:
 
       - name: Verify Deployment
         run: |
-          ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text)
-
-          if curl -s --head --request GET $ALB_DNS | grep "200 OK" > /dev/null; then
-            echo "Deployment successful: Application is responding"
-          else
-            echo "Deployment failed: Application is not responding"
-            exit 1
-          fi
+          # Direct task-level check instead of load balancer
+          aws ecs wait services-stable \
+            --cluster my-nginx-prod-cluster \
+            --services my-nginx-prod-service
+          
+          # Get task details to confirm deployment
+          aws ecs describe-services \
+            --cluster my-nginx-prod-cluster \
+            --services my-nginx-prod-service
