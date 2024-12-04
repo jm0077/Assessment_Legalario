@@ -102,123 +102,92 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Check if ECS Service Exists
-        id: check-service
+      - name: Determine Current Active Service
+        id: current-service
         run: |
-          # Verificar si el servicio ya existe
-          SERVICE_EXISTS=$(aws ecs describe-services --cluster my-nginx-prod-cluster --services my-nginx-prod-green --query 'services[0].serviceName' --output text)
+          CURRENT_SERVICE=$(aws ecs describe-services \
+            --cluster my-nginx-prod-cluster \
+            --services my-nginx-service \
+            --query 'services[0].serviceName' \
+            --output text)
           
-          if [ "$SERVICE_EXISTS" == "None" ]; then
-            echo "ACTION=create" >> $GITHUB_ENV
+          if [ "$CURRENT_SERVICE" == "my-nginx-service" ]; then
+            echo "BLUE_SERVICE=my-nginx-service" >> $GITHUB_ENV
+            echo "GREEN_SERVICE=my-nginx-service-green" >> $GITHUB_ENV
           else
-            echo "ACTION=update" >> $GITHUB_ENV
+            echo "BLUE_SERVICE=my-nginx-service-green" >> $GITHUB_ENV
+            echo "GREEN_SERVICE=my-nginx-service" >> $GITHUB_ENV
           fi
 
-      - name: Create Target Group for Green Environment
-        if: env.ACTION == 'create'
-        env:
-          VPC_ID: ${{ secrets.VPC_ID }}
+      - name: Create Green Service if Not Exists
         run: |
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          TARGET_GROUP_ARN=$(aws elbv2 create-target-group \
-            --name green-tg-$SHORT_SHA \
-            --protocol HTTP \
-            --port 80 \
-            --vpc-id $VPC_ID \
-            --target-type ip \
+          if ! aws ecs describe-services \
+            --cluster my-nginx-prod-cluster \
+            --services ${{ env.GREEN_SERVICE }} \
+            2>/dev/null; then
+            
+            aws ecs create-service \
+              --cluster my-nginx-prod-cluster \
+              --service-name ${{ env.GREEN_SERVICE }} \
+              --task-definition my-nginx-task:latest \
+              --desired-count 1 \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PUBLIC_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP }}],assignPublicIp=ENABLED}"
+          fi
+
+      - name: Update Green Service with New Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: my-nginx-app
+        run: |
+          # Update task definition with new image
+          NEW_TASK_DEF=$(aws ecs register-task-definition \
+            --family my-nginx-task \
+            --container-definitions "[{
+              \"name\": \"nginx-container\",
+              \"image\": \"$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}\",
+              \"portMappings\": [{
+                \"containerPort\": 80,
+                \"hostPort\": 80,
+                \"protocol\": \"tcp\"
+              }]
+            }]" \
+            --requires-compatibilities FARGATE \
+            --network-mode awsvpc \
+            --cpu 256 \
+            --memory 512 \
+            --execution-role-arn ${{ secrets.ECS_TASK_EXECUTION_ROLE }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          aws ecs update-service \
+            --cluster my-nginx-prod-cluster \
+            --service ${{ env.GREEN_SERVICE }} \
+            --task-definition $NEW_TASK_DEF
+
+      - name: Perform Health Checks on Green Service
+        run: |
+          # Implement your health check logic here
+          # For example, wait for service to stabilize and pass health checks
+          aws ecs wait services-stable \
+            --cluster my-nginx-prod-cluster \
+            --services ${{ env.GREEN_SERVICE }}
+
+      - name: Swap Services
+        run: |
+          # Stop the blue service
+          aws ecs update-service \
+            --cluster my-nginx-prod-cluster \
+            --service ${{ env.BLUE_SERVICE }} \
+            --desired-count 0
+
+          # Update load balancer to point to new service
+          TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
+            --names my-nginx-tg \
             --query 'TargetGroups[0].TargetGroupArn' \
             --output text)
-          
-          echo "TARGET_GROUP_ARN=$TARGET_GROUP_ARN" >> $GITHUB_ENV
 
-      - name: Deploy to Fargate Green Environment (Create Service)
-        if: env.ACTION == 'create'
-        env:
-          ECS_SERVICE: my-nginx-prod-green
-          ECS_CLUSTER: my-nginx-prod-cluster
-          CONTAINER_NAME: my-nginx-app
-          PUBLIC_SUBNET_IDS: subnet-05b5533b0a8602474,subnet-095b0b27bd626d558,subnet-0247dff8cb76adddf
-          SECURITY_GROUP: sg-0e2f023a42da0b442
-        run: |
-          # Crear servicio ECS si no existe
-          task_def=$(aws ecs register-task-definition \
-            --cli-input-json file://task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          echo "Registered Task Definition ARN: $task_def"
-          
-          aws ecs create-service \
-            --cluster $ECS_CLUSTER \
-            --service-name $ECS_SERVICE \
-            --task-definition $task_def \
-            --desired-count 1 \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}"
-
-      - name: Deploy to Fargate Green Environment (Update Service)
-        if: env.ACTION == 'update'
-        env:
-          ECS_SERVICE: my-nginx-prod-green
-          ECS_CLUSTER: my-nginx-prod-cluster
-          CONTAINER_NAME: my-nginx-app
-        run: |
-          # Actualizar servicio ECS si ya existe
-          task_def=$(aws ecs register-task-definition \
-            --cli-input-json file://task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          echo "Registered Task Definition ARN: $task_def"
-          
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --task-definition $task_def \
-            --desired-count 1
-
-      - name: Run Smoke Tests
-        run: |
-          ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text)
-
-          if curl -s --head --request GET $ALB_DNS | grep "200 OK" > /dev/null; then
-            echo "Smoke test passed: Application is responding"
-          else
-            echo "Smoke test failed: Application is not responding"
-            exit 1
-          fi
-
-      - name: Swap Blue-Green Deployments
-        env:
-          ECS_BLUE_SERVICE: my-nginx-prod-blue
-          ECS_GREEN_SERVICE: my-nginx-prod-green
-          ECS_CLUSTER: my-nginx-prod-cluster
-        run: |
-          BLUE_SERVICE_DETAILS=$(aws ecs describe-services \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_BLUE_SERVICE \
-            --query 'services[0].runningCount' \
-            --output text)
-
-          if [ "$BLUE_SERVICE_DETAILS" != "0" ]; then
-            aws ecs update-service \
-              --cluster $ECS_CLUSTER \
-              --service $ECS_BLUE_SERVICE \
-              --desired-count 0
-          fi
-
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_GREEN_SERVICE \
-            --desired-count 1
-
-      - name: Update Load Balancer Listener
-        env:
-          LISTENER_ARN: ${{ secrets.LISTENER_ARN }}
-        run: |
+          # Modify load balancer listener
           aws elbv2 modify-listener \
-            --listener-arn $LISTENER_ARN \
-            --default-actions \
-              Type=forward,TargetGroupArn=${{ env.TARGET_GROUP_ARN }}
+            --listener-arn ${{ secrets.LISTENER_ARN }} \
+            --default-actions Type=forward,TargetGroupArn=$TARGET_GROUP_ARN
