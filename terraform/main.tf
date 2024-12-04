@@ -12,27 +12,27 @@ resource "aws_vpc" "main" {
 
 # Creación de subredes públicas
 resource "aws_subnet" "public_1" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.1.0/24"
-  availability_zone = "us-east-1a"
+  vpc_id             = aws_vpc.main.id
+  cidr_block         = "10.0.1.0/24"
+  availability_zone  = "us-east-1a"
   tags = {
     Name = "Public Subnet 1"
   }
 }
 
 resource "aws_subnet" "public_2" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.2.0/24"
-  availability_zone = "us-east-1b"
+  vpc_id             = aws_vpc.main.id
+  cidr_block         = "10.0.2.0/24"
+  availability_zone  = "us-east-1b"
   tags = {
     Name = "Public Subnet 2"
   }
 }
 
 resource "aws_subnet" "public_3" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.3.0/24"
-  availability_zone = "us-east-1c"
+  vpc_id             = aws_vpc.main.id
+  cidr_block         = "10.0.3.0/24"
+  availability_zone  = "us-east-1c"
   tags = {
     Name = "Public Subnet 3"
   }
@@ -200,6 +200,52 @@ resource "aws_iam_role_policy" "ecs_task_role_policy" {
   })
 }
 
+# Definición de la tarea ECS
+resource "aws_ecs_task_definition" "main" {
+  family                   = "nginx-task-family"
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  network_mode            = "awsvpc"
+  cpu                      = "256"  # Asigna 256 unidades de CPU
+  memory                   = "512"  # Asigna 512 MB de memoria
+  requires_compatibilities = ["FARGATE"]
+
+  container_definitions = jsonencode([{
+    name      = "nginx-container"
+    image     = "${aws_ecr_repository.nginx_app.repository_url}:latest"
+    cpu       = 256  # CPU para el contenedor específico
+    memory    = 512  # Memoria para el contenedor específico
+    essential = true
+    portMappings = [{
+      containerPort = 80
+      hostPort      = 80
+      protocol      = "tcp"
+    }]
+  }])
+}
+
+# Creación del servicio ECS
+resource "aws_ecs_service" "main" {
+  name            = "my-nginx-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.main.arn
+  desired_count   = 1
+  launch_type     = "EC2"
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.main.arn
+    container_name   = "nginx-container"
+    container_port   = 80
+  }
+
+  network_configuration {
+    subnets          = [aws_subnet.public_1.id]
+    security_groups = [aws_security_group.allow_http.id]
+  }
+
+  depends_on = [aws_lb_listener.main]
+}
+
 # Outputs para usar en la definición de tareas
 output "task_execution_role_arn" {
   value = aws_iam_role.ecs_task_execution_role.arn
@@ -234,6 +280,6 @@ output "public_subnet_ids" {
 }
 
 output "security_group_id" {
-  value = aws_security_group.allow_http.id
+  value       = aws_security_group.allow_http.id
   description = "El ID del grupo de seguridad para permitir tráfico HTTP."
 }
