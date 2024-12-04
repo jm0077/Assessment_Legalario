@@ -108,21 +108,13 @@ jobs:
           # Retrieve the task ARNs
           TASK_ARNS=$(aws ecs list-tasks \
             --cluster $ECS_CLUSTER \
-            --service-name my-nginx-green-service \
-            --query 'taskArns' \
-            --output json)
+            --service-name my-nginx-green-service)
 
           # Debug: Print out the task ARNs
           echo "Retrieved Task ARNs: $TASK_ARNS"
 
-          # Check if task ARNs are empty
-          if [ "$TASK_ARNS" == "[]" ]; then
-            echo "No tasks found in the green service"
-            exit 1
-          fi
-
           # Parse the first task ARN
-          TASK_ARN=$(echo $TASK_ARNS | jq -r '.[0]')
+          TASK_ARN=$(echo $TASK_ARNS | jq -r '.taskArns[0]')
 
           # Debug: Print the specific task ARN
           echo "Selected Task ARN: $TASK_ARN"
