@@ -120,3 +120,96 @@ resource "aws_ecr_repository" "nginx_app" {
     scan_on_push = true
   }
 }
+
+# IAM Role for ECS Task Execution
+resource "aws_iam_role" "ecs_task_execution_role" {
+  name = "ecs-task-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# Attach Amazon ECS Task Execution Role Policy
+resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# IAM Role for ECS Tasks
+resource "aws_iam_role" "ecs_task_role" {
+  name = "ecs-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# Optional: Add specific permissions for the task role
+resource "aws_iam_role_policy" "ecs_task_role_policy" {
+  name = "ecs-task-role-policy"
+  role = aws_iam_role.ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Outputs for the roles (to be used in task definition)
+output "task_execution_role_arn" {
+  value = aws_iam_role.ecs_task_execution_role.arn
+}
+
+output "task_role_arn" {
+  value = aws_iam_role.ecs_task_role.arn
+}
+
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+output "load_balancer_arn" {
+  value = aws_lb.main.arn
+}
+
+output "load_balancer_listener_arn" {
+  value = aws_lb_listener.main.arn
+}
+
+output "public_subnet_ids" {
+  value = [
+    aws_subnet.public_1.id, 
+    aws_subnet.public_2.id, 
+    aws_subnet.public_3.id
+  ]
+}
