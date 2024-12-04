@@ -11,7 +11,7 @@ env:
   ECR_REPOSITORY: my-nginx-app
   ECS_CLUSTER: my-nginx-prod-cluster
   ECS_SERVICE: my-nginx-prod-service
-  GREEN_SERVICE_NAME: 
+  GREEN_SERVICE_NAME: my-nginx-green-service
 
 jobs:
   build:
