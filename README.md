@@ -5,23 +5,39 @@ Este proyecto implementa un pipeline de despliegue continuo para una aplicación
 ## Arquitectura
 
 ```mermaid
-graph TD
-    A[Desarrolladores] -->|1. Push/PR| B[GitHub Repo]
-    B -->|2. Trigger| C[GitHub Actions]
-    C -->|3. Aprobación| D[Issue Approval]
-    C -->|4. Build| E[Amazon ECR]
-    C -->|5. Deploy| F[AWS CodeDeploy]
-    F -->|6. Blue/Green| G[ECS Fargate]
-    G -->|7. Load Balancing| H[Application Load Balancer]
-    H -->|8. Traffic| I[Users]
-
+flowchart TD
+    Dev[Desarrolladores] --> Repo[GitHub Repo]
+    Repo --> Actions[GitHub Actions]
+    
+    Actions -->|Approval| Issue[Issue Approval]
+    Actions -->|Build| ECR[Amazon ECR]
+    Actions -->|Deploy| Deploy[AWS CodeDeploy]
+    
     subgraph "Alta Disponibilidad"
-        H
-        G
-        J[AZ-1]
-        K[AZ-2]
-        L[AZ-3]
+        Deploy --> Fargate[ECS Fargate]
+        Fargate --> ALB[Application Load Balancer]
+        
+        subgraph "Zonas de Disponibilidad"
+            direction LR
+            Fargate --> AZ1[AZ-1]
+            Fargate --> AZ2[AZ-2]
+            Fargate --> AZ3[AZ-3]
+        end
     end
+    
+    ALB --> Users[Users]
+
+    style Dev fill:#f9f,stroke:#333
+    style Repo fill:#bbf,stroke:#333
+    style Actions fill:#dfd,stroke:#333
+    style Issue fill:#fdd,stroke:#333
+    style ECR fill:#ffd,stroke:#333
+    style Deploy fill:#dff,stroke:#333
+    style Fargate fill:#ddf,stroke:#333
+    style ALB fill:#fdf,stroke:#333
+    style AZ1 fill:#fff,stroke:#333
+    style AZ2 fill:#fff,stroke:#333
+    style AZ3 fill:#fff,stroke:#333
 ```
 
 ## Estructura del Proyecto
